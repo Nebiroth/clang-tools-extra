@@ -3,6 +3,7 @@ set(LLVM_LINK_COMPONENTS
   )
 
 add_clang_library(clangDaemon
+  ClangdFileUtils.cpp
   ClangdLSPServer.cpp
   ClangdServer.cpp
   ClangdUnit.cpp
@@ -18,6 +19,12 @@ add_clang_library(clangDaemon
   Protocol.cpp
   ProtocolHandlers.cpp
   Trace.cpp
+  index/BTree.cpp
+  index/ClangdIndex.cpp
+  index/ClangdIndexerImpl.cpp
+  index/ClangdIndexDataPiece.cpp
+  index/ClangdIndexDataStorage.cpp
+  index/ClangdIndexString.cpp
 
   LINK_LIBS
   clangAST

@@ -41,6 +41,7 @@ struct CompileCommand;
 namespace clangd {
 
 class Logger;
+class ClangdIndexDataProvider;
 
 /// A diagnostic with its FixIts.
 struct DiagWithFixIts {
@@ -69,7 +70,7 @@ public:
         std::shared_ptr<const PreambleData> Preamble,
         std::unique_ptr<llvm::MemoryBuffer> Buffer,
         std::shared_ptr<PCHContainerOperations> PCHs,
-        IntrusiveRefCntPtr<vfs::FileSystem> VFS, clangd::Logger &Logger);
+        IntrusiveRefCntPtr<vfs::FileSystem> VFS, clangd::Logger &Logger, PathRef FileName);
 
   ParsedAST(ParsedAST &&Other);
   ParsedAST &operator=(ParsedAST &&Other);
@@ -263,7 +264,10 @@ SourceLocation getBeginningOfIdentifier(ParsedAST &Unit, const Position &Pos,
 
 /// Get definition of symbol at a specified \p Pos.
 std::vector<Location> findDefinitions(ParsedAST &AST, Position Pos,
-                                      clangd::Logger &Logger);
+    ClangdIndexDataProvider &IndexDataProvider, clangd::Logger &Logger);
+std::vector<Location> findReferences(ParsedAST &AST, Position Pos,
+    bool IncludeDeclaration, ClangdIndexDataProvider &IndexDataProvider,
+    clangd::Logger &Logger);
 
 /// For testing/debugging purposes. Note that this method deserializes all
 /// unserialized Decls, so use with care.

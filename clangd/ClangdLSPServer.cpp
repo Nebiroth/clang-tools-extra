@@ -62,6 +62,7 @@ void ClangdLSPServer::onInitialize(Ctx C, InitializeParams &Params) {
              json::obj{
                  {"commands", {ExecuteCommandParams::CLANGD_APPLY_FIX_COMMAND}},
              }},
+            {"referencesProvider", true},
         }}}});
   if (Params.rootUri && !Params.rootUri->file.empty())
     Server.setRootPath(Params.rootUri->file);
@@ -95,6 +96,14 @@ void ClangdLSPServer::onDocumentDidChange(Ctx C,
                      Params.contentChanges[0].text);
 }
 
+void ClangdLSPServer::onDocumentDidSave(
+    Ctx C, DidSaveTextDocumentParams &Params) {
+  FileEvent FE = { Params.textDocument.uri, FileChangeType::Changed };
+  DidChangeWatchedFilesParams P;
+  P.changes = {FE};
+  Server.onFileEvent(P);
+}
+
 void ClangdLSPServer::onFileEvent(Ctx C, DidChangeWatchedFilesParams &Params) {
   Server.onFileEvent(Params);
 }
@@ -118,6 +127,12 @@ void ClangdLSPServer::onCommand(Ctx C, ExecuteCommandParams &Params) {
     // Ideally, we would wait for the response and if there is no error, we
     // would reply success/failure to the original RPC.
     C.call("workspace/applyEdit", ApplyEdit);
+  } else if (Params.command == ExecuteCommandParams::CLANGD_REINDEX_COMMAND) {
+    Server.reindex();
+  } else if (Params.command == ExecuteCommandParams::CLANGD_DUMPINCLUDEDBY_COMMAND && Params.textDocument) {
+    Server.dumpIncludedBy(Params.textDocument->uri);
+  } else if (Params.command == ExecuteCommandParams::CLANGD_DUMPINCLUSIONS_COMMAND && Params.textDocument) {
+    Server.dumpInclusions(Params.textDocument->uri);
   } else {
     // We should not get here because ExecuteCommandParams would not have
     // parsed in the first place and this handler should not be called. But if
@@ -233,6 +248,20 @@ void ClangdLSPServer::onSwitchSourceHeader(Ctx C,
   llvm::Optional<Path> Result = Server.switchSourceHeader(Params.uri.file);
   std::string ResultUri;
   C.reply(Result ? URI::fromFile(*Result).uri : "");
+}
+
+void ClangdLSPServer::onReferences(Ctx C, ReferenceParams &Params) {
+  auto Items = Server.findReferences(
+      Params.textDocument.uri.file,
+      Position{Params.position.line, Params.position.character}, Params.context.includeDeclaration);
+  if (!Items)
+    return C.replyError(ErrorCode::InvalidParams,
+                        llvm::toString(Items.takeError()));
+
+  if (!Items)
+    return C.replyError(ErrorCode::InvalidParams,
+                        llvm::toString(Items.takeError()));
+  C.reply(json::ary(Items->Value));
 }
 
 ClangdLSPServer::ClangdLSPServer(JSONOutput &Out, unsigned AsyncThreadsCount,

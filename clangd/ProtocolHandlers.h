@@ -36,6 +36,7 @@ public:
   virtual void onShutdown(Ctx C, ShutdownParams &Params) = 0;
   virtual void onExit(Ctx C, ExitParams &Params) = 0;
   virtual void onDocumentDidOpen(Ctx C, DidOpenTextDocumentParams &Params) = 0;
+  virtual void onDocumentDidSave(Ctx C, DidSaveTextDocumentParams &Params) = 0;
   virtual void onDocumentDidChange(Ctx C,
                                    DidChangeTextDocumentParams &Params) = 0;
   virtual void onDocumentDidClose(Ctx C,
@@ -54,6 +55,7 @@ public:
   virtual void onFileEvent(Ctx C, DidChangeWatchedFilesParams &Params) = 0;
   virtual void onCommand(Ctx C, ExecuteCommandParams &Params) = 0;
   virtual void onRename(Ctx C, RenameParams &Parames) = 0;
+  virtual void onReferences(Ctx C, ReferenceParams &Params) = 0;
 };
 
 void registerCallbackHandlers(JSONRPCDispatcher &Dispatcher, JSONOutput &Out,
