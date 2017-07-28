@@ -37,6 +37,10 @@ class PCHContainerOperations;
 
 namespace clangd {
 
+class Logger;
+class ClangdIndexer;
+class ClangdIndexDataProvider;
+
 /// Turn a [line, column] pair into an offset in Code.
 size_t positionToOffset(StringRef Code, Position P);
 
@@ -279,6 +283,11 @@ public:
   llvm::Expected<Tagged<std::vector<Location>>>
   findDefinitions(const Context &Ctx, PathRef File, Position Pos);
 
+  /// Get workspace-wide references of symbol at a specified \p Line and
+  /// \p Column in \p File.
+  llvm::Expected<Tagged<std::vector<Location>>> findReferences(const Context &Ctx,
+                PathRef File, Position Pos, bool IncludeDeclaration);
+
   /// Helper function that returns a path to the corresponding source file when
   /// given a header file and vice versa.
   llvm::Optional<Path> switchSourceHeader(PathRef Path);
@@ -319,6 +328,10 @@ public:
   /// Called when an event occurs for a watched file in the workspace.
   void onFileEvent(const DidChangeWatchedFilesParams &Params);
 
+  void reindex();
+  void dumpIncludedBy (URI File);
+  void dumpInclusions (URI File);
+
 private:
   /// FIXME: This stats several files to find a .clang-format file. I/O can be
   /// slow. Think of a way to cache this.
@@ -354,6 +367,10 @@ private:
   // called before all other members to stop the worker thread that references
   // ClangdServer
   ClangdScheduler WorkScheduler;
+
+  std::shared_ptr<ClangdIndexer> Indexer;
+  std::shared_ptr<ClangdIndexDataProvider> IndexDataProvider;
+  std::recursive_mutex IndexMutex;
 };
 
 } // namespace clangd

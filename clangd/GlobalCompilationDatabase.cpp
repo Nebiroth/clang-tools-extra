@@ -9,6 +9,8 @@
 
 #include "GlobalCompilationDatabase.h"
 #include "Logger.h"
+#include "index/ClangdIndex.h"
+
 #include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -29,6 +31,38 @@ DirectoryBasedGlobalCompilationDatabase::
         llvm::Optional<Path> CompileCommandsDir)
     : CompileCommandsDir(std::move(CompileCommandsDir)) {}
 
+
+std::vector<tooling::CompileCommand> DirectoryBasedGlobalCompilationDatabase::getCompileCommandsUsingIndex(std::unique_ptr<ClangdIndexFile> IndexFile) const {
+
+  std::vector<tooling::CompileCommand> Commands;
+
+  class FirstDependentSourceFileVisitor : public ClangdIndexFile::DependentVisitor {
+    const DirectoryBasedGlobalCompilationDatabase &GCDB;
+    std::vector<tooling::CompileCommand> &Commands;
+  public:
+    FirstDependentSourceFileVisitor(const DirectoryBasedGlobalCompilationDatabase &GCDB,
+        std::vector<tooling::CompileCommand> &Commands) :
+          GCDB(GCDB), Commands(Commands) {
+    }
+
+    virtual ClangdIndexFile::NodeVisitResult VisitDependent(ClangdIndexFile& IndexFile) {
+      auto IncludedBy = IndexFile.getFirstIncludedBy();
+      if (!IncludedBy) {
+        auto CDB = GCDB.getCompilationDatabase(IndexFile.getPath());
+        if (CDB) {
+          Commands = CDB->getCompileCommands(IndexFile.getPath());
+          return ClangdIndexFile::NodeVisitResult::ABORT;
+        }
+      }
+      return ClangdIndexFile::NodeVisitResult::CONTINUE;
+    }
+  };
+
+  FirstDependentSourceFileVisitor V(*this, Commands);
+  IndexFile->visitDependentFiles(V);
+  return Commands;
+}
+
 llvm::Optional<tooling::CompileCommand>
 DirectoryBasedGlobalCompilationDatabase::getCompileCommand(PathRef File) const {
   if (auto CDB = getCompilationDatabase(File)) {
@@ -36,6 +70,17 @@ DirectoryBasedGlobalCompilationDatabase::getCompileCommand(PathRef File) const {
     if (!Candidates.empty()) {
       addExtraFlags(File, Candidates.front());
       return std::move(Candidates.front());
+    }
+
+    //TODO: index mutex needs to be locked!
+    if (auto LockedIndex = Index.lock()) {
+      auto IndexFile = LockedIndex->getFile(File.str());
+      if (IndexFile) {
+        auto Commands = getCompileCommandsUsingIndex(std::move(IndexFile));
+        if (!Commands.empty()) {
+          return std::move(Commands.front());
+        }
+      }
     }
   }
   return llvm::None;

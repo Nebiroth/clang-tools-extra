@@ -8,9 +8,17 @@
 //===-------------------------------------------------------------------===//
 
 #include "ClangdServer.h"
+
+#include "ClangdFileUtils.h"
+#include "index/ClangdIndexDataConsumer.h"
+#include "index/ClangdIndexerImpl.h"
+
 #include "clang/Format/Format.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/CompilerInvocation.h"
+#include "clang/Frontend/FrontendAction.h"
+#include "clang/Index/IndexingAction.h"
+#include "clang/Index/IndexDataConsumer.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Refactoring/RefactoringResultConsumer.h"
 #include "clang/Tooling/Refactoring/Rename/RenamingAction.h"
@@ -21,7 +29,11 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Timer.h"
+
 #include <future>
+#include <functional>
+#include <unordered_set>
 
 using namespace clang;
 using namespace clang::clangd;
@@ -164,8 +176,20 @@ ClangdServer::ClangdServer(GlobalCompilationDatabase &CDB,
 void ClangdServer::setRootPath(PathRef RootPath) {
   std::string NewRootPath = llvm::sys::path::convert_to_slash(
       RootPath, llvm::sys::path::Style::posix);
-  if (llvm::sys::fs::is_directory(NewRootPath))
-    this->RootPath = NewRootPath;
+  SmallString<256> RootPathRemoveDots = StringRef(NewRootPath);
+  llvm::sys::path::remove_dots(RootPathRemoveDots, true);
+  if (llvm::sys::fs::is_directory(RootPathRemoveDots))
+    this->RootPath = RootPathRemoveDots.str();
+
+  if (!this->RootPath)
+    return;
+
+  assert (!Indexer);
+  auto ClangIndexer = std::make_shared<ClangdIndexerImpl>(RootPath.str(), CDB);
+  Indexer = ClangIndexer;
+  IndexDataProvider = ClangIndexer;
+  assert(Indexer && IndexDataProvider);
+  Indexer->indexRoot();
 }
 
 std::future<Context> ClangdServer::addDocument(Context Ctx, PathRef File,
@@ -424,38 +448,19 @@ ClangdServer::findDefinitions(const Context &Ctx, PathRef File, Position Pos) {
         "findDefinitions called on non-added file",
         llvm::errc::invalid_argument);
 
+  std::lock_guard<std::recursive_mutex> Lock(IndexMutex);
   std::vector<Location> Result;
-  Resources->getAST().get()->runUnderLock([Pos, &Result, &Ctx](ParsedAST *AST) {
+  Resources->getAST().get()->runUnderLock([this, Pos, &Result, &Ctx](ParsedAST *AST) {
     if (!AST)
       return;
-    Result = clangd::findDefinitions(Ctx, *AST, Pos);
+    Result = clangd::findDefinitions(Ctx, *AST, Pos, *IndexDataProvider);
   });
   return make_tagged(std::move(Result), TaggedFS.Tag);
 }
 
 llvm::Optional<Path> ClangdServer::switchSourceHeader(PathRef Path) {
-
-  StringRef SourceExtensions[] = {".cpp", ".c", ".cc", ".cxx",
-                                  ".c++", ".m", ".mm"};
-  StringRef HeaderExtensions[] = {".h", ".hh", ".hpp", ".hxx", ".inc"};
-
-  StringRef PathExt = llvm::sys::path::extension(Path);
-
-  // Lookup in a list of known extensions.
-  auto SourceIter =
-      std::find_if(std::begin(SourceExtensions), std::end(SourceExtensions),
-                   [&PathExt](PathRef SourceExt) {
-                     return SourceExt.equals_lower(PathExt);
-                   });
-  bool IsSource = SourceIter != std::end(SourceExtensions);
-
-  auto HeaderIter =
-      std::find_if(std::begin(HeaderExtensions), std::end(HeaderExtensions),
-                   [&PathExt](PathRef HeaderExt) {
-                     return HeaderExt.equals_lower(PathExt);
-                   });
-
-  bool IsHeader = HeaderIter != std::end(HeaderExtensions);
+  bool IsSource = isSourceFilePath(Path);
+  bool IsHeader = isHeaderFilePath(Path);
 
   // We can only switch between extensions known extensions.
   if (!IsSource && !IsHeader)
@@ -465,9 +470,9 @@ llvm::Optional<Path> ClangdServer::switchSourceHeader(PathRef Path) {
   // extension was found.
   ArrayRef<StringRef> NewExts;
   if (IsSource)
-    NewExts = HeaderExtensions;
+    NewExts = getHeaderExtensions();
   else
-    NewExts = SourceExtensions;
+    NewExts = getSourceExtensions();
 
   // Storage for the new path.
   SmallString<128> NewPath = StringRef(Path);
@@ -617,6 +622,66 @@ ClangdServer::scheduleCancelRebuild(Context Ctx,
 }
 
 void ClangdServer::onFileEvent(const DidChangeWatchedFilesParams &Params) {
-  // FIXME: Do nothing for now. This will be used for indexing and potentially
-  // invalidating other caches.
+  assert(Indexer);
+  for (const FileEvent &FE : Params.changes) {
+    llvm::errs() << llvm::format(" File event, path: %s, type: %d\n", FE.uri.file.c_str(), FE.type);
+    ClangdIndexer::FileChangeType Type;
+    switch (FE.type) {
+     case FileChangeType::Created:
+       Type = ClangdIndexer::FileChangeType::Created;
+       break;
+     case FileChangeType::Changed:
+       Type = ClangdIndexer::FileChangeType::Changed;
+       break;
+     case FileChangeType::Deleted:
+       Type = ClangdIndexer::FileChangeType::Deleted;
+       break;
+    }
+    std::lock_guard<std::recursive_mutex> Lock(IndexMutex);
+    Indexer->onFileEvent( { FE.uri.file, Type });
+  }
+}
+
+llvm::Expected<Tagged<std::vector<Location>>>
+ClangdServer::findReferences(const Context &Ctx, PathRef File, Position Pos, bool IncludeDeclaration) {
+  assert(Indexer);
+  auto FileContents = DraftMgr.getDraft(File);
+  assert(FileContents.Draft &&
+         "findReferences is called for non-added document");
+
+  auto TaggedFS = FSProvider.getTaggedFileSystem(File);
+
+  std::shared_ptr<CppFile> Resources = Units.getFile(File);
+  assert(Resources && "Calling findReferences on non-added file");
+
+  std::lock_guard<std::recursive_mutex> Lock(IndexMutex);
+  std::vector<Location> Result;
+  Resources->getAST().get()->runUnderLock([&Ctx, Pos, &Result, IncludeDeclaration, this](ParsedAST *AST) {
+    if (!AST)
+      return;
+    Result = clangd::findReferences(Ctx, *AST, Pos, IncludeDeclaration, *IndexDataProvider);
+  });
+  return make_tagged(std::move(Result), TaggedFS.Tag);
+}
+
+void ClangdServer::reindex() {
+  if (!RootPath) {
+    return;
+  }
+
+  assert(Indexer);
+  std::lock_guard<std::recursive_mutex> Lock(IndexMutex);
+  Indexer->reindex();
+}
+
+void ClangdServer::dumpIncludedBy(URI File) {
+  std::lock_guard<std::recursive_mutex> Lock(IndexMutex);
+  assert(Indexer);
+  IndexDataProvider->dumpIncludedBy(File.file);
+}
+
+void ClangdServer::dumpInclusions(URI File) {
+  std::lock_guard<std::recursive_mutex> Lock(IndexMutex);
+  assert(Indexer);
+  IndexDataProvider->dumpInclusions(File.file);
 }

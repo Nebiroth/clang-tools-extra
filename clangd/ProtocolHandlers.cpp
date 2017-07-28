@@ -73,4 +73,5 @@ void clangd::registerCallbackHandlers(JSONRPCDispatcher &Dispatcher,
   Register("workspace/executeCommand", &ProtocolCallbacks::onCommand);
   Register("textDocument/documentHighlight",
            &ProtocolCallbacks::onDocumentHighlight);
+  Register("textDocument/references", &ProtocolCallbacks::onReferences);
 }

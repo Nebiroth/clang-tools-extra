@@ -163,6 +163,11 @@ bool fromJSON(const json::Expr &Params, DidCloseTextDocumentParams &R) {
   return O && O.map("textDocument", R.textDocument);
 }
 
+bool fromJSON(const json::Expr &Params, DidSaveTextDocumentParams &R) {
+  json::ObjectMapper O(Params);
+  return O && O.map("textDocument", R.textDocument);
+}
+
 bool fromJSON(const json::Expr &Params, DidChangeTextDocumentParams &R) {
   json::ObjectMapper O(Params);
   return O && O.map("textDocument", R.textDocument) &&
@@ -253,6 +258,12 @@ bool fromJSON(const json::Expr &Params, WorkspaceEdit &R) {
 
 const std::string ExecuteCommandParams::CLANGD_APPLY_FIX_COMMAND =
     "clangd.applyFix";
+const std::string ExecuteCommandParams::CLANGD_REINDEX_COMMAND =
+    "reindex";
+const std::string ExecuteCommandParams::CLANGD_DUMPINCLUDEDBY_COMMAND =
+    "dumpincludedby";
+const std::string ExecuteCommandParams::CLANGD_DUMPINCLUSIONS_COMMAND =
+    "dumpinclusions";
 
 bool fromJSON(const json::Expr &Params, ExecuteCommandParams &R) {
   json::ObjectMapper O(Params);
@@ -263,6 +274,14 @@ bool fromJSON(const json::Expr &Params, ExecuteCommandParams &R) {
   if (R.command == ExecuteCommandParams::CLANGD_APPLY_FIX_COMMAND) {
     return Args && Args->size() == 1 &&
            fromJSON(Args->front(), R.workspaceEdit);
+  } else if (R.command == ExecuteCommandParams::CLANGD_DUMPINCLUDEDBY_COMMAND) {
+      return Args && Args->size() == 1 &&
+             fromJSON(Args->front(), R.textDocument);
+  } else if (R.command == ExecuteCommandParams::CLANGD_DUMPINCLUSIONS_COMMAND) {
+      return Args && Args->size() == 1 &&
+             fromJSON(Args->front(), R.textDocument);
+  } else if (R.command == ExecuteCommandParams::CLANGD_REINDEX_COMMAND) {
+      return !Args || Args->empty();
   }
   return false; // Unrecognized command.
 }
@@ -284,6 +303,18 @@ bool fromJSON(const json::Expr &Params, TextDocumentPositionParams &R) {
   json::ObjectMapper O(Params);
   return O && O.map("textDocument", R.textDocument) &&
          O.map("position", R.position);
+}
+
+bool fromJSON(const json::Expr &Params, ReferenceContext &R) {
+  json::ObjectMapper O(Params);
+  return O && O.map("includeDeclaration", R.includeDeclaration);
+}
+
+bool fromJSON(const json::Expr &Params, ReferenceParams &R) {
+  json::ObjectMapper O(Params);
+  return O && O.map("context", R.context) &&
+      O.map("textDocument", R.textDocument) &&
+      O.map("position", R.position);
 }
 
 json::Expr toJSON(const CompletionItem &CI) {

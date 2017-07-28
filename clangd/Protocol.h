@@ -216,6 +216,12 @@ struct DidCloseTextDocumentParams {
 };
 bool fromJSON(const json::Expr &, DidCloseTextDocumentParams &);
 
+struct DidSaveTextDocumentParams {
+  /// The document that was closed.
+  TextDocumentIdentifier textDocument;
+};
+bool fromJSON(const json::Expr &, DidSaveTextDocumentParams &);
+
 struct TextDocumentContentChangeEvent {
   /// The new text of the document.
   std::string text;
@@ -373,6 +379,9 @@ json::Expr toJSON(const WorkspaceEdit &WE);
 struct ExecuteCommandParams {
   // Command to apply fix-its. Uses WorkspaceEdit as argument.
   const static std::string CLANGD_APPLY_FIX_COMMAND;
+  const static std::string CLANGD_REINDEX_COMMAND;
+  const static std::string CLANGD_DUMPINCLUDEDBY_COMMAND;
+  const static std::string CLANGD_DUMPINCLUSIONS_COMMAND;
 
   /// The command identifier, e.g. CLANGD_APPLY_FIX_COMMAND
   std::string command;
@@ -380,6 +389,8 @@ struct ExecuteCommandParams {
   // Arguments
 
   llvm::Optional<WorkspaceEdit> workspaceEdit;
+
+  llvm::Optional<TextDocumentIdentifier> textDocument;
 };
 bool fromJSON(const json::Expr &, ExecuteCommandParams &);
 
@@ -396,6 +407,17 @@ struct TextDocumentPositionParams {
   Position position;
 };
 bool fromJSON(const json::Expr &, TextDocumentPositionParams &);
+
+struct ReferenceContext {
+  /// Include the declaration of the current symbol.
+  bool includeDeclaration;
+};
+bool fromJSON(const json::Expr &Params, ReferenceContext &R);
+
+struct ReferenceParams : public TextDocumentPositionParams {
+  ReferenceContext context;
+};
+bool fromJSON(const json::Expr &Params, ReferenceParams &R);
 
 /// The kind of a completion entry.
 enum class CompletionItemKind {

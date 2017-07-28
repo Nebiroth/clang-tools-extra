@@ -55,6 +55,7 @@ private:
   void onShutdown(Ctx C, ShutdownParams &Params) override;
   void onExit(Ctx C, ExitParams &Params) override;
   void onDocumentDidOpen(Ctx C, DidOpenTextDocumentParams &Params) override;
+  void onDocumentDidSave(Ctx C, DidSaveTextDocumentParams &Params) override;
   void onDocumentDidChange(Ctx C, DidChangeTextDocumentParams &Params) override;
   void onDocumentDidClose(Ctx C, DidCloseTextDocumentParams &Params) override;
   void
@@ -73,6 +74,7 @@ private:
   void onFileEvent(Ctx C, DidChangeWatchedFilesParams &Params) override;
   void onCommand(Ctx C, ExecuteCommandParams &Params) override;
   void onRename(Ctx C, RenameParams &Parames) override;
+  void onReferences(Ctx C, ReferenceParams &Params) override;
 
   std::vector<TextEdit> getFixIts(StringRef File, const clangd::Diagnostic &D);
 
