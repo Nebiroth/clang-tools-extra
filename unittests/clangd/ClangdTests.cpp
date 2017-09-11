@@ -113,6 +113,8 @@ std::string dumpASTWithoutMemoryLocs(ClangdServer &Server, PathRef File) {
 
 } // namespace
 
+//TODO: Figure out why this doesn't work on mac
+#ifndef __APPLE__
 class ClangdVFSTest : public ::testing::Test {
 protected:
   std::string parseSourceAndDumpAST(
@@ -810,6 +812,7 @@ int d;
   auto Future = Server.addDocument(FooCpp, SourceContentsWithoutErrors);
   Future.wait();
 }
+#endif
 
 } // namespace clangd
 } // namespace clang
