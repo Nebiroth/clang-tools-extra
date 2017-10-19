@@ -880,6 +880,35 @@ TextDocumentPositionParams::parse(llvm::yaml::MappingNode *Params,
   return Result;
 }
 
+std::string Hover::unparse(const Hover &H) {
+  std::string Result;
+  std::string ContentsStr;
+  for (auto &Contents : H.contents) {
+    ContentsStr += MarkedString::unparse(Contents) + ",";
+  }
+  if (!ContentsStr.empty())
+    ContentsStr.pop_back();
+  llvm::raw_string_ostream(Result) << llvm::format(
+      R"({"contents": [%s], "range": %s})", ContentsStr.c_str(),
+      Range::unparse(H.range).c_str());
+  return Result;
+}
+
+std::string MarkedString::unparse(const MarkedString &MS) {
+  std::string Result;
+  if (MS.markdownString != "")
+  {
+    llvm::raw_string_ostream(Result) << llvm::format(R"("%s")", llvm::yaml::escape(MS.markdownString).c_str());
+  }
+  else
+  {
+
+    llvm::raw_string_ostream(Result) << llvm::format(R"({"language": "%s", "value": "%s"})", (llvm::yaml::escape(MS.codeBlockLanguage)).c_str(), (llvm::yaml::escape(MS.codeBlockValue)).c_str());
+  }
+
+  return Result;
+}
+
 std::string CompletionItem::unparse(const CompletionItem &CI) {
   std::string Result = "{";
   llvm::raw_string_ostream Os(Result);

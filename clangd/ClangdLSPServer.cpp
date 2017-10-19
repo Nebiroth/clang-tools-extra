@@ -47,7 +47,8 @@ void ClangdLSPServer::onInitialize(Ctx C, InitializeParams &Params) {
           "codeActionProvider": true,
           "completionProvider": {"resolveProvider": false, "triggerCharacters": [".",">",":"]},
           "signatureHelpProvider": {"triggerCharacters": ["(",","]},
-          "definitionProvider": true
+          "definitionProvider": true,
+          "hoverProvider": true
         }})");
   if (Params.rootUri && !Params.rootUri->file.empty())
     Server.setRootPath(Params.rootUri->file);
@@ -172,7 +173,7 @@ void ClangdLSPServer::onGoToDefinition(Ctx C,
 
   std::string Locations;
   for (const auto &Item : Items) {
-    Locations += Location::unparse(Item);
+    Locations += Location::unparse(Item.first);
     Locations += ",";
   }
   if (!Locations.empty())
@@ -185,6 +186,21 @@ void ClangdLSPServer::onSwitchSourceHeader(Ctx C,
   llvm::Optional<Path> Result = Server.switchSourceHeader(Params.uri.file);
   std::string ResultUri;
   C.reply(Result ? URI::unparse(URI::fromFile(*Result)) : R"("")");
+}
+
+void ClangdLSPServer::onCodeHover(Ctx C, TextDocumentPositionParams &Params) {
+
+  Hover H =
+      Server
+          .findHover(Params.textDocument.uri.file,
+                     Position{Params.position.line, Params.position.character})
+          .Value;
+
+  if (!(H.contents[0].codeBlockLanguage == "" && H.contents[0].markdownString == "" && H.contents[0].codeBlockValue == ""))
+    C.reply(Hover::unparse(H));
+  else
+    C.reply("[]");
+
 }
 
 ClangdLSPServer::ClangdLSPServer(JSONOutput &Out, unsigned AsyncThreadsCount,

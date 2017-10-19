@@ -22,6 +22,7 @@
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_PROTOCOL_H
 
 #include "llvm/ADT/Optional.h"
+#include "clang/Basic/SourceLocation.h"
 #include "llvm/Support/YAMLParser.h"
 #include <string>
 #include <vector>
@@ -390,6 +391,59 @@ struct TextDocumentPositionParams {
 
   static llvm::Optional<TextDocumentPositionParams>
   parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
+};
+
+struct MarkedString {
+ /**
+ * MarkedString can be used to render human readable text. It is either a
+ * markdown string
+ * or a code-block that provides a language and a code snippet. The language
+ * identifier
+ * is sematically equal to the optional language identifier in fenced code
+ * blocks in GitHub
+ * issues. See
+ * https://help.github.com/articles/creating-and-highlighting-code-blocks/#syntax-highlighting
+ *
+ * The pair of a language and a value is an equivalent to markdown:
+ * ```
+ * ${language}
+ * ${value}
+ * ```
+ *
+ * Note that markdown strings will be sanitized - that means html will be
+ * escaped.
+ */
+
+  MarkedString(std::string markdown)
+      : markdownString(markdown), codeBlockLanguage(""), codeBlockValue("") {}
+
+  MarkedString(std::string blockLanguage, std::string blockValue)
+      : markdownString(""), codeBlockLanguage(blockLanguage),
+        codeBlockValue(blockValue) {}
+
+  std::string markdownString;
+  std::string codeBlockLanguage;
+  std::string codeBlockValue;
+
+  static std::string unparse(const MarkedString &MS);
+};
+
+struct Hover {
+
+  Hover(std::vector<MarkedString> contents, Range r) : contents(contents), range(r) {}
+
+  /**
+   * The hover's content
+   */
+  std::vector<MarkedString> contents;
+
+  /**
+   * An optional range is a range inside a text document
+   * that is used to visualize a hover, e.g. by changing the background color.
+   */
+  Range range;
+
+  static std::string unparse(const Hover &H);
 };
 
 /// The kind of a completion entry.

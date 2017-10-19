@@ -268,8 +268,10 @@ SignatureHelp signatureHelp(PathRef FileName, tooling::CompileCommand Command,
                             clangd::Logger &Logger);
 
 /// Get definition of symbol at a specified \p Pos.
-std::vector<Location> findDefinitions(ParsedAST &AST, Position Pos,
+std::vector<std::pair<Location, const Decl*>> findDefinitions(ParsedAST &AST, Position Pos,
                                       clangd::Logger &Logger);
+
+Hover getHover(ParsedAST &AST, std::pair<Location, const Decl *> LocationDecl);
 
 /// For testing/debugging purposes. Note that this method deserializes all
 /// unserialized Decls, so use with care.

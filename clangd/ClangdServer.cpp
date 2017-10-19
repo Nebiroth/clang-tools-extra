@@ -8,6 +8,7 @@
 //===-------------------------------------------------------------------===//
 
 #include "ClangdServer.h"
+#include "Protocol.h"
 #include "clang/Format/Format.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/CompilerInvocation.h"
@@ -329,7 +330,7 @@ std::string ClangdServer::dumpAST(PathRef File) {
   return Result;
 }
 
-Tagged<std::vector<Location>> ClangdServer::findDefinitions(PathRef File,
+Tagged<std::vector<std::pair<Location, const Decl*>>> ClangdServer::findDefinitions(PathRef File,
                                                             Position Pos) {
   auto FileContents = DraftMgr.getDraft(File);
   assert(FileContents.Draft &&
@@ -340,7 +341,7 @@ Tagged<std::vector<Location>> ClangdServer::findDefinitions(PathRef File,
   std::shared_ptr<CppFile> Resources = Units.getFile(File);
   assert(Resources && "Calling findDefinitions on non-added file");
 
-  std::vector<Location> Result;
+  std::vector<std::pair<Location, const Decl*>> Result;
   Resources->getAST().get()->runUnderLock([Pos, &Result, this](ParsedAST *AST) {
     if (!AST)
       return;
@@ -407,6 +408,37 @@ llvm::Optional<Path> ClangdServer::switchSourceHeader(PathRef Path) {
 
   return llvm::None;
 }
+
+Tagged<Hover> ClangdServer::findHover(PathRef File, Position Pos) {
+  auto FileContents = DraftMgr.getDraft(File);
+  assert(FileContents.Draft &&
+         "findHover is called for non-added document");
+
+  std::vector<MarkedString> contents;
+  MarkedString MS = MarkedString("", "");
+  contents.push_back(MS);
+  Range R;
+  // Hover FinalHover(MS, R);
+  Hover FinalHover(contents, R);
+  auto TaggedFS = FSProvider.getTaggedFileSystem(File);
+
+  std::shared_ptr<CppFile> Resources = Units.getFile(File);
+  assert(Resources && "Calling findDefinitions on non-added file");
+
+  std::vector<std::pair<Location, const Decl*>> Result;
+
+  Resources->getAST().get()->runUnderLock([Pos, &Result, &FinalHover, this](ParsedAST *AST) {
+    if (!AST)
+      return;
+    Result = clangd::findDefinitions(*AST, Pos, Logger);
+    if (!Result.empty()) {
+      FinalHover = clangd::getHover(*AST, Result[0]);
+    }
+  });
+
+  return make_tagged(std::move(FinalHover), TaggedFS.Tag);
+}
+
 
 std::future<void> ClangdServer::scheduleReparseAndDiags(
     PathRef File, VersionedDraft Contents, std::shared_ptr<CppFile> Resources,
