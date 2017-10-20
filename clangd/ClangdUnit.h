@@ -268,8 +268,8 @@ SignatureHelp signatureHelp(PathRef FileName, tooling::CompileCommand Command,
                             clangd::Logger &Logger);
 
 /// Get definition of symbol at a specified \p Pos.
-std::vector<std::pair<Location, const Decl*>> findDefinitions(ParsedAST &AST, Position Pos,
-                                      clangd::Logger &Logger);
+std::vector<std::pair<Location, const Decl *>>
+findDefinitions(ParsedAST &AST, Position Pos, clangd::Logger &Logger);
 
 Hover getHover(ParsedAST &AST, std::pair<Location, const Decl *> LocationDecl);
 

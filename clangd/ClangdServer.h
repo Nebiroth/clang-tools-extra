@@ -265,7 +265,8 @@ public:
                 IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS = nullptr);
 
   /// Get definition of symbol at a specified \p Line and \p Column in \p File.
-  Tagged<std::vector<std::pair<Location, const Decl*>>> findDefinitions(PathRef File, Position Pos);
+  Tagged<std::vector<std::pair<Location, const Decl *>>>
+  findDefinitions(PathRef File, Position Pos);
 
   /// Helper function that returns a path to the corresponding source file when
   /// given a header file and vice versa.

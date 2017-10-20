@@ -897,49 +897,90 @@ public:
                       unsigned Offset,
                       index::IndexDataConsumer::ASTNodeInfo ASTNode) override {
 
-    SourceRange sr = D->getSourceRange();
+    // Keep default value.
+    SourceRange SR = D->getSourceRange();
+
     if (auto FuncDecl = dyn_cast<FunctionDecl>(D)) {
       if (FuncDecl->isThisDeclarationADefinition())
-        sr = SourceRange(D->getSourceRange().getBegin(),
+        SR = SourceRange(D->getSourceRange().getBegin(),
                          FuncDecl->getBody()->getLocStart());
     } else if (auto ClassDecl = dyn_cast<TagDecl>(D)) {
       if (ClassDecl->isStruct()) {
-        sr = SourceRange(D->getSourceRange().getBegin(),
+        SR = SourceRange(D->getSourceRange().getBegin(),
                          ClassDecl->getBraceRange().getBegin());
       } else if (ClassDecl->isClass()) {
         if (ClassDecl->isThisDeclarationADefinition())
-          sr = SourceRange(D->getSourceRange().getBegin(),
+          SR = SourceRange(D->getSourceRange().getBegin(),
                            ClassDecl->getBraceRange().getBegin());
       } else if (ClassDecl->isEnum()) {
         if (ClassDecl->isThisDeclarationADefinition())
-          sr = SourceRange(D->getSourceRange().getBegin(),
+          SR = SourceRange(D->getSourceRange().getBegin(),
                            ClassDecl->getBraceRange().getBegin());
       }
     } else if (auto NameDecl = dyn_cast<NamespaceDecl>(D)) {
       SourceLocation BeforeLBraceLoc = Lexer::getLocForEndOfToken(
           D->getLocation(), 0, AST.getSourceManager(), AST.getLangOpts());
       if (BeforeLBraceLoc.isValid())
-        sr = SourceRange(NameDecl->getLocStart(), BeforeLBraceLoc);
+        SR = SourceRange(NameDecl->getLocStart(), BeforeLBraceLoc);
       else
-        sr = D->getSourceRange();
+        SR = D->getSourceRange();
     } else if (dyn_cast<TypedefDecl>(D)) {
-      // TODO: find a way to get the hover for the type that is being aliased
-      sr = D->getSourceRange();
+      SR = D->getSourceRange();
     }
     // for everything else in ValueDecl, so lvalues of variables, function
     // designations and enum constants
     else if (dyn_cast<ValueDecl>(D)) {
-      sr = D->getSourceRange();
+      SR = D->getSourceRange();
     }
 
     if (isSearchedLocation(FID, Offset)) {
-      DeclarationLocations.push_back(
-          {getDeclarationLocation(D->getSourceRange()), D});
+      if (dyn_cast<FunctionDecl>(D)) {
+        SourceLocation L = getFunctionComments(D);
+        if (L.isValid())
+          SR = SourceRange(L, D->getSourceRange().getEnd());
+        DeclarationLocations.push_back({getDeclarationLocation(SR), D});
+      } else {
+        DeclarationLocations.push_back(
+            {getDeclarationLocation(D->getSourceRange()), D});
+      }
     }
     return true;
   }
 
 private:
+  // Returns SourceLocation pointing to the beginning of function comments when
+  // hovering on a function. This function backtracks from the starting location
+  // one line at a time to determine what will be included.
+
+  SourceLocation getFunctionComments(const Decl *D) {
+    const SourceManager &SM = AST.getSourceManager();
+    Location StartLocation = getDeclarationLocation(D->getSourceRange());
+    SourceLocation LocationCandidate;
+
+    const FileEntry *FE = SM.getFileManager().getFile(StartLocation.uri.file);
+    FileID ID = SM.translateFile(FE);
+    StringRef Ref = SM.getBufferData(ID);
+    int StartLine =
+        StartLocation.range.start.line; // previous line from the actual start
+    bool done = false;
+    while (!done && StartLine > 0) {
+      unsigned Start =
+          SM.getFileOffset(SM.translateFileLineCol(FE, StartLine, 1));
+      unsigned End =
+          SM.getFileOffset(SM.translateFileLineCol(FE, StartLine, 50));
+      StringRef CurrentBuffer = Ref.slice(Start, End);
+      if (CurrentBuffer.find("//") != std::string::npos &&
+          CurrentBuffer.find("}") == std::string::npos)
+        LocationCandidate = SM.translateFileLineCol(FE, StartLine, 1);
+      else
+        done = true;
+
+      StartLine--;
+    }
+
+    return LocationCandidate;
+  }
+
   bool isSearchedLocation(FileID FID, unsigned Offset) const {
     const SourceManager &SourceMgr = AST.getSourceManager();
     return SourceMgr.getFileOffset(SearchedLocation) == Offset &&
@@ -1038,8 +1079,8 @@ SourceLocation getBeginningOfIdentifier(ParsedAST &Unit, const Position &Pos,
 }
 } // namespace
 
-std::vector<std::pair<Location, const Decl*>> clangd::findDefinitions(ParsedAST &AST, Position Pos,
-                                              clangd::Logger &Logger) {
+std::vector<std::pair<Location, const Decl *>>
+clangd::findDefinitions(ParsedAST &AST, Position Pos, clangd::Logger &Logger) {
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
   const FileEntry *FE = SourceMgr.getFileEntryForID(SourceMgr.getMainFileID());
   if (!FE)
@@ -1061,25 +1102,25 @@ std::vector<std::pair<Location, const Decl*>> clangd::findDefinitions(ParsedAST 
   return DeclLocationsFinder->takeLocations();
 }
 
-Hover clangd::getHover(ParsedAST &AST, std::pair<Location, const Decl *> LocationDecl) {
+Hover clangd::getHover(ParsedAST &AST,
+                       std::pair<Location, const Decl *> LocationDecl) {
   Location L = LocationDecl.first;
-  std::vector<MarkedString> contents;
-  unsigned start;
-  unsigned end;
+  std::vector<MarkedString> Contents;
+  unsigned Start;
+  unsigned End;
 
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
   Range R;
   const FileEntry *FE = SourceMgr.getFileManager().getFile(L.uri.file);
   FileID id = SourceMgr.translateFile(FE);
-  StringRef ref = SourceMgr.getBufferData(id);
-  start = SourceMgr.getFileOffset(SourceMgr.translateFileLineCol(
+  StringRef Ref = SourceMgr.getBufferData(id);
+  Start = SourceMgr.getFileOffset(SourceMgr.translateFileLineCol(
       FE, L.range.start.line + 1, L.range.start.character + 1));
-  end = SourceMgr.getFileOffset(SourceMgr.translateFileLineCol(
+  End = SourceMgr.getFileOffset(SourceMgr.translateFileLineCol(
       FE, L.range.end.line + 1, L.range.end.character + 1));
-  ref = ref.slice(start, end);
+  Ref = Ref.slice(Start, End);
 
-  if (LocationDecl.second)
-  {
+  if (LocationDecl.second) {
     if (const NamedDecl *NamedD = dyn_cast<NamedDecl>(LocationDecl.second)) {
       // Get the full qualified name, the non-qualified name and then diff them.
       // If there's something left, use that as the scope in the hover, trimming
@@ -1092,20 +1133,20 @@ Hover clangd::getHover(ParsedAST &AST, std::pair<Location, const Decl *> Locatio
       // Get all contexts for current NamedDecl
       const DeclContext *Ctx = NamedD->getDeclContext();
 
-        // For ObjC methods, look through categories and use the interface as context.
-        if (auto *MD = dyn_cast<ObjCMethodDecl>(NamedD))
-          if (auto *ID = MD->getClassInterface())
-            Ctx = ID;
+      // For ObjC methods, look through categories and use the interface as
+      // context.
+      if (auto *MD = dyn_cast<ObjCMethodDecl>(NamedD))
+        if (auto *ID = MD->getClassInterface())
+          Ctx = ID;
 
-        typedef SmallVector<const DeclContext *, 8> ContextsTy;
-        ContextsTy Contexts;
+      typedef SmallVector<const DeclContext *, 8> ContextsTy;
+      ContextsTy Contexts;
 
-        // Collect contexts.
-        while (Ctx && isa<NamedDecl>(Ctx)) {
-          Contexts.push_back(Ctx);
-          Ctx = Ctx->getParent();
-        }
-
+      // Collect contexts.
+      while (Ctx && isa<NamedDecl>(Ctx)) {
+        Contexts.push_back(Ctx);
+        Ctx = Ctx->getParent();
+      }
 
       std::string ResWithScope = WithScopeOS.str();
       if (!ResWithScope.empty()) {
@@ -1132,53 +1173,45 @@ Hover clangd::getHover(ParsedAST &AST, std::pair<Location, const Decl *> Locatio
                   Res = "std namespace";
                 else
                   Res = "namespace named " + Res;
-              }
-              else if (isa<TagDecl>(Contexts[0])) {
+              } else if (isa<TagDecl>(Contexts[0])) {
                 std::string s = Contexts[0]->getDeclKindName();
                 if (s == "CXXRecord") // doesnt work right currently
                 {
                   Res = "class named " + Res;
                   std::string FileRes = LocationDecl.first.uri.file;
                   MarkedString FileInfo(FileRes);
-                  contents.push_back(FileInfo);
+                  Contents.push_back(FileInfo);
+                } else if (s == "Enum") {
+                  Res = "Enum " + Res;
                 }
-                else
-                  Res = "struct named " + Res;
-              }
-              else if (isa<FunctionDecl>(Contexts[0]))
-              {
-
+              } else if (isa<FunctionDecl>(Contexts[0])) {
               }
             }
             MarkedString Info("In " + Res);
-            contents.push_back(Info);
-          }
-          else
-          {
-            if(isa<FunctionDecl>(NamedD))
-            {
+            Contents.push_back(Info);
+          } else {
+            if (isa<FunctionDecl>(NamedD)) {
               MarkedString Info("global function");
-              contents.push_back(Info);
+              Contents.push_back(Info);
             }
           }
         }
       }
     }
-  }
-  else
-  {
-    // If Decl is nullptr, then this was obtained form a Macro type such as #define, #ifdef and so on.
+  } else {
+    // If Decl is nullptr, then this was obtained form a Macro type such as
+    // #define, #ifdef and so on.
     // TODO: support statements other than #define
     // TODO: find a way to distinguish with null Decls
 
     MarkedString MS("#define statement");
-    contents.push_back(MS);
+    Contents.push_back(MS);
   }
 
-  MarkedString MS("C++", ref);
-  contents.push_back(MS);
+  MarkedString MS("C++", Ref);
+  Contents.push_back(MS);
   R = L.range;
-  Hover H(contents, R);
+  Hover H(Contents, R);
   return H;
 }
 

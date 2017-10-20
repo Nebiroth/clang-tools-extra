@@ -196,11 +196,12 @@ void ClangdLSPServer::onCodeHover(Ctx C, TextDocumentPositionParams &Params) {
                      Position{Params.position.line, Params.position.character})
           .Value;
 
-  if (!(H.contents[0].codeBlockLanguage == "" && H.contents[0].markdownString == "" && H.contents[0].codeBlockValue == ""))
+  if (!(H.contents[0].codeBlockLanguage == "" &&
+        H.contents[0].markdownString == "" &&
+        H.contents[0].codeBlockValue == ""))
     C.reply(Hover::unparse(H));
   else
     C.reply("[]");
-
 }
 
 ClangdLSPServer::ClangdLSPServer(JSONOutput &Out, unsigned AsyncThreadsCount,
