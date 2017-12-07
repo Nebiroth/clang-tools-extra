@@ -70,6 +70,15 @@ RecordPointer uncompressRecPtr(int32_t Value) {
 }
 }
 
+void ClangdIndexDataPiece::putInt8(RecordPointer Rec, int8_t Value) {
+  startWrite();
+  *(reinterpret_cast<int8_t *>(&Buffer[recPtrToOffsetInPiece(Rec)])) = Value;
+}
+
+int8_t ClangdIndexDataPiece::getInt8(RecordPointer Rec) {
+  return *reinterpret_cast<int8_t *>(&Buffer[recPtrToOffsetInPiece(Rec)]);
+}
+
 void ClangdIndexDataPiece::putInt32(RecordPointer Rec, int32_t Value) {
   startWrite();
   *(reinterpret_cast<int32_t *>(&Buffer[recPtrToOffsetInPiece(Rec)])) = Value;

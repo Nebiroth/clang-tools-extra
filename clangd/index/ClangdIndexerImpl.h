@@ -21,8 +21,11 @@ public:
   void onFileEvent(FileEvent Event) override;
   void indexRoot() override;
   void reindex() override;
-  void foreachOccurrence(const USR& Buf, index::SymbolRoleSet Roles,
-      llvm::function_ref<bool(ClangdIndexDataOccurrence&)> Receiver) override;
+  void printStats() override;
+  void foreachSymbols(StringRef Query,
+      llvm::function_ref<bool(ClangdIndexDataSymbol&)> Receiver) override;
+  void foreachSymbols(const USR &Usr,
+      llvm::function_ref<bool(ClangdIndexDataSymbol&)> Receiver) override;
 
   void dumpIncludedBy(StringRef File) override;
   void dumpInclusions(StringRef File) override;

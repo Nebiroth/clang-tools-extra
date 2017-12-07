@@ -382,6 +382,7 @@ struct ExecuteCommandParams {
   const static std::string CLANGD_REINDEX_COMMAND;
   const static std::string CLANGD_DUMPINCLUDEDBY_COMMAND;
   const static std::string CLANGD_DUMPINCLUSIONS_COMMAND;
+  const static std::string CLANGD_PRINTSTATS_COMMAND;
 
   /// The command identifier, e.g. CLANGD_APPLY_FIX_COMMAND
   std::string command;
@@ -393,6 +394,60 @@ struct ExecuteCommandParams {
   llvm::Optional<TextDocumentIdentifier> textDocument;
 };
 bool fromJSON(const json::Expr &, ExecuteCommandParams &);
+
+/// A symbol kind.
+enum class SymbolKind {
+  File = 1,
+  Module = 2,
+  Namespace = 3,
+  Package = 4,
+  Class = 5,
+  Method = 6,
+  Property = 7,
+  Field = 8,
+  Constructor = 9,
+  Enum = 10,
+  Interface = 11,
+  Function = 12,
+  Variable = 13,
+  Constant = 14,
+  String = 15,
+  Number = 16,
+  Boolean = 17,
+  Array = 18,
+  Object = 19,
+  Key = 20,
+  Null = 21,
+  EnumMember = 22,
+  Struct = 23,
+  Event = 24,
+  Operator = 25,
+  TypeParameter = 26
+};
+
+/// Represents information about programming constructs like variables, classes,
+/// interfaces etc.
+struct SymbolInformation {
+  /// The name of this symbol.
+  std::string name;
+
+  /// The kind of this symbol.
+  SymbolKind kind;
+
+  /// The location of this symbol.
+  Location location;
+
+  /// The name of the symbol containing this symbol.
+  std::string containerName;
+};
+json::Expr toJSON(const SymbolInformation &);
+
+/// The parameters of a Workspace Symbol Request.
+struct WorkspaceSymbolParams {
+  /// A non-empty query string
+  std::string query;
+};
+bool fromJSON(const json::Expr &, WorkspaceSymbolParams &);
 
 struct ApplyWorkspaceEditParams {
   WorkspaceEdit edit;

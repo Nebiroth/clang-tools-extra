@@ -997,6 +997,36 @@ TEST_F(ClangdIndexDataStorageTest, TestMalloc) {
   }
 }
 
+TEST_F(ClangdIndexDataStorageTest, TestPutGetInt8) {
+  RecordPointer Rec;
+  {
+    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    Storage.startWrite();
+
+    Rec = Storage.mallocRecord(sizeof(int8_t) * 3);
+    Storage.putInt8(Rec, INT8_MIN);
+    Storage.putInt8(Rec + sizeof(int8_t), INT8_MAX);
+    Storage.putInt8(Rec + sizeof(int8_t) * 2, 0);
+
+    ASSERT_EQ(Storage.getInt8(Rec), INT8_MIN);
+    ASSERT_EQ(Storage.getInt8(Rec + sizeof(int8_t)),
+        INT8_MAX);
+    ASSERT_EQ(Storage.getInt8(Rec + sizeof(int8_t) * 2),
+        0);
+    Storage.endWrite();
+
+    Storage.flush();
+  }
+
+  {
+    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+
+    ASSERT_EQ(Storage.getInt8(Rec), INT8_MIN);
+    ASSERT_EQ(Storage.getInt8(Rec + sizeof(int8_t)), INT8_MAX);
+    ASSERT_EQ(Storage.getInt8(Rec + sizeof(int8_t) * 2), 0);
+  }
+}
+
 TEST_F(ClangdIndexDataStorageTest, TestPutGetInt32) {
   RecordPointer Rec;
   {
@@ -1407,6 +1437,25 @@ TEST_F(ClangdBTreeTest, TestInsertMuchMore) {
       }
       ASSERT_TRUE(found);
     }
+
+    // Also test that we can match all of them with a "multi match" visitor.
+
+    class AllMatch : public BTreeVisitor {
+      int Total = 0;
+    public:
+      int compare(RecordPointer Record) override {
+        return 0;
+      }
+      void visit(RecordPointer Record) override {
+        Total++;
+      }
+      int getTotal() {
+        return Total;
+      }
+    };
+    AllMatch V;
+    Tree.accept(V);
+    ASSERT_EQ(V.getTotal(), NUM_CHECKED);
   }
 }
 
@@ -1654,7 +1703,7 @@ TEST_F(ClangdIndexSymbolTest, TestCreateAndGetters) {
     ClangdIndex Index(STORAGE_FILE_NAME);
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
-    auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, Index);
+    auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, "foo", "myns", index::SymbolKind::Function, Index);
     Index.addSymbol(*IndexSymbol);
     Index.addFile(*IndexFile);
 
@@ -1707,7 +1756,7 @@ TEST_F(ClangdIndexOccurrenceTest, TestCreateAndGetters) {
     ClangdIndex Index(STORAGE_FILE_NAME);
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
-    auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, Index);
+    auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, "foo", "myns", index::SymbolKind::Function, Index);
     auto IndexOccurrence = llvm::make_unique<ClangdIndexOccurrence>(Index.getStorage(), Index,
         *IndexFile, *IndexSymbol, LOC_START, LOC_END,
         static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition));
@@ -1800,7 +1849,7 @@ TEST_F(ClangdIndexFileTest, TestAddOccurrence) {
     ClangdIndex Index(STORAGE_FILE_NAME);
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
-    auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, Index);
+    auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, "foo", "myns", index::SymbolKind::Function, Index);
     auto IndexOccurrence = llvm::make_unique<ClangdIndexOccurrence>(Index.getStorage(), Index,
         *IndexFile, *IndexSymbol, LOC_START, LOC_END,
         static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition));
@@ -1868,7 +1917,7 @@ TEST_F(ClangdIndexFileTest, TestOnChange) {
     ClangdIndex Index(STORAGE_FILE_NAME);
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
-    auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, Index);
+    auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, "foo", "myns", index::SymbolKind::Function, Index);
     auto IndexOccurrence = llvm::make_unique<ClangdIndexOccurrence>(Index.getStorage(), Index,
         *IndexFile, *IndexSymbol, LOC_START, LOC_END,
         static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition));
@@ -1893,7 +1942,7 @@ TEST_F(ClangdIndexFileTest, TestOnChange) {
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
     auto IndexHeaderFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH + ".h", Index);
-    auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, Index);
+    auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, "foo", "myns", index::SymbolKind::Function, Index);
 
     // Add definition
     auto IndexOccurrence = llvm::make_unique<ClangdIndexOccurrence>(Index.getStorage(), Index,

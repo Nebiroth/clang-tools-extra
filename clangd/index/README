@@ -24,10 +24,12 @@ Data is allocated and stored on disk via ClangdIndexDataStorage, a utility that 
 - Re-indexing dependent files.
 - Open Definition.
 - Find References.
+- Open Workspace Symbol. Only by non-qualified name for now.
 - Using the file dependency information to find a suitable compilation database when opening a header.
 
 ## What doesn't work/Left to do
 A lot!
+- Open Workspace Symbol, searching by qualified name and wildcards.
 - Reacting to external file events, such as system header changes.
 - Multiple symbol kinds for the same USRs is not supported.
 - Tracking file content hash (to prevent re-indexing generated files on restart, etc).

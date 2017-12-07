@@ -27,6 +27,8 @@ public:
   void clear(RecordPointer Rec, unsigned Length);
   void flush();
 
+  void putInt8(RecordPointer Rec, int8_t Value);
+  int8_t getInt8(RecordPointer Rec);
   void putInt16(RecordPointer Rec, int16_t Value);
   int16_t getInt16(RecordPointer Rec);
   void putInt32(RecordPointer Rec, int32_t Value);

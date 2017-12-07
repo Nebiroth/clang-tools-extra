@@ -642,6 +642,118 @@ void ClangdServer::onFileEvent(const DidChangeWatchedFilesParams &Params) {
   }
 }
 
+//FIXME: This is duplicated with ClangdUnit.cpp
+llvm::Optional<Location> getLocation(SourceManager& SourceMgr, const std::string & File, uint32_t LocStart,
+    uint32_t LocEnd) {
+  const FileEntry *FE = SourceMgr.getFileManager().getFile(File);
+  if (!FE) {
+    return llvm::None;
+  }
+  FileID FID = SourceMgr.getOrCreateFileID(FE, SrcMgr::C_User);
+
+  Position Begin;
+  bool Invalid;
+  Begin.line = SourceMgr.getLineNumber(FID, LocStart, &Invalid) - 1;
+  Begin.character = SourceMgr.getColumnNumber(FID, LocStart, &Invalid) - 1;
+  Position End;
+  End.line = SourceMgr.getLineNumber(FID, LocEnd, &Invalid) - 1;
+  End.character = SourceMgr.getColumnNumber(FID, LocEnd, &Invalid) - 1;
+  Range R = { Begin, End };
+  Location L;
+  L.uri = URI::fromFile(File);
+  L.range = R;
+  return L;
+}
+
+SymbolKind indexSymbolKindToSymbolKind(index::SymbolKind Kind) {
+
+  switch (Kind) {
+  case index::SymbolKind::Unknown:
+    return SymbolKind::Variable;
+  case index::SymbolKind::Module:
+    return SymbolKind::Module;
+  case index::SymbolKind::Namespace:
+    return SymbolKind::Namespace;
+  case index::SymbolKind::NamespaceAlias:
+    return SymbolKind::Namespace;
+  case index::SymbolKind::Macro:
+    // FIXME: Need proper kind for this. See
+    // https://github.com/Microsoft/language-server-protocol/issues/344
+    // https://github.com/Microsoft/language-server-protocol/issues/352
+    return SymbolKind::String;
+  case index::SymbolKind::Enum:
+    return SymbolKind::Enum;
+  case index::SymbolKind::Struct:
+    //FIXME: Not in released protocol. return SymbolKind::Struct;
+    return SymbolKind::Class;
+  case index::SymbolKind::Class:
+    return SymbolKind::Class;
+  case index::SymbolKind::Protocol:
+    // FIXME: Need proper kind for this.
+    return SymbolKind::Interface;
+  case index::SymbolKind::Extension:
+    // FIXME: Need proper kind for this.
+    return SymbolKind::Interface;
+  case index::SymbolKind::Union:
+    // FIXME: Need proper kind for this.
+    return SymbolKind::Class;
+  case index::SymbolKind::TypeAlias:
+    // FIXME: Need proper kind for this.
+    return SymbolKind::Class;
+  case index::SymbolKind::Function:
+    return SymbolKind::Function;
+  case index::SymbolKind::Variable:
+    return SymbolKind::Variable;
+  case index::SymbolKind::Field:
+      return SymbolKind::Field;
+  case index::SymbolKind::EnumConstant:
+      return SymbolKind::Enum;
+      //FIXME: Not in released protocol return SymbolKind::EnumMember;
+  case index::SymbolKind::InstanceMethod:
+  case index::SymbolKind::ClassMethod:
+  case index::SymbolKind::StaticMethod:
+      return SymbolKind::Method;
+  case index::SymbolKind::InstanceProperty:
+  case index::SymbolKind::ClassProperty:
+  case index::SymbolKind::StaticProperty:
+      return SymbolKind::Property;
+  case index::SymbolKind::Constructor:
+  case index::SymbolKind::Destructor:
+      return SymbolKind::Method;
+  case index::SymbolKind::ConversionFunction:
+      return SymbolKind::Function;
+  case index::SymbolKind::Parameter:
+      return SymbolKind::Variable;
+  case index::SymbolKind::Using:
+      // Not sure this is correct.
+      return SymbolKind::Namespace;
+  }
+}
+
+llvm::Expected<std::vector<SymbolInformation>>
+ClangdServer::onWorkspaceSymbol(StringRef Query) {
+  std::vector<SymbolInformation> Result;
+  if (Query.empty())
+    return Result;
+
+  FileSystemOptions FileOpts;
+  FileManager FM(FileOpts);
+  IntrusiveRefCntPtr<DiagnosticsEngine> DE(CompilerInstance::createDiagnostics(new DiagnosticOptions));
+  SourceManager TempSM(*DE, FM);
+
+  IndexDataProvider->foreachSymbols(Query, [&Result, &TempSM](ClangdIndexDataSymbol &Sym) {
+    USR Usr(Sym.getUsr());
+    Sym.foreachOccurrence(static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition), [&Result, &TempSM, &Sym](ClangdIndexDataOccurrence &Occurrence) {
+      auto L = getLocation(TempSM, Occurrence.getPath(), Occurrence.getStartOffset(TempSM), Occurrence.getEndOffset(TempSM));
+      if (L)
+        Result.push_back({Sym.getName(), indexSymbolKindToSymbolKind(Sym.getKind()), *L, Sym.getQualifier()});
+      return true;
+    });
+    return true;
+  });
+  return Result;
+}
+
 llvm::Expected<Tagged<std::vector<Location>>>
 ClangdServer::findReferences(const Context &Ctx, PathRef File, Position Pos, bool IncludeDeclaration) {
   assert(Indexer);
@@ -654,6 +766,8 @@ ClangdServer::findReferences(const Context &Ctx, PathRef File, Position Pos, boo
   std::shared_ptr<CppFile> Resources = Units.getFile(File);
   assert(Resources && "Calling findReferences on non-added file");
 
+  auto IndexTotalTimer = llvm::Timer("index time", "Find References Time");
+  IndexTotalTimer.startTimer();
   std::lock_guard<std::recursive_mutex> Lock(IndexMutex);
   std::vector<Location> Result;
   Resources->getAST().get()->runUnderLock([&Ctx, Pos, &Result, IncludeDeclaration, this](ParsedAST *AST) {
@@ -661,13 +775,14 @@ ClangdServer::findReferences(const Context &Ctx, PathRef File, Position Pos, boo
       return;
     Result = clangd::findReferences(Ctx, *AST, Pos, IncludeDeclaration, *IndexDataProvider);
   });
+  IndexTotalTimer.stopTimer();
+  llvm::errs() << llvm::format("Found %u references.\n", Result.size());
   return make_tagged(std::move(Result), TaggedFS.Tag);
 }
 
 void ClangdServer::reindex() {
-  if (!RootPath) {
+  if (!RootPath)
     return;
-  }
 
   assert(Indexer);
   std::lock_guard<std::recursive_mutex> Lock(IndexMutex);
@@ -684,4 +799,13 @@ void ClangdServer::dumpInclusions(URI File) {
   std::lock_guard<std::recursive_mutex> Lock(IndexMutex);
   assert(Indexer);
   IndexDataProvider->dumpInclusions(File.file);
+}
+
+void ClangdServer::printStats() {
+  if (!RootPath)
+    return;
+
+  assert(Indexer);
+  std::lock_guard<std::recursive_mutex> Lock(IndexMutex);
+  Indexer->printStats();
 }

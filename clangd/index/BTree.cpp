@@ -440,8 +440,10 @@ void BTree::search(RecordPointer SearchedNodeRec, BTreeVisitor& Visitor) {
     }
     int Compare = Visitor.compare(Key);
     if (Compare == 0) {
+      // Allow visitor to find multiple matches
+      search(SearchedNode.getChild(I), Visitor);
+
       Visitor.visit(Key);
-      return;
     } else if (Compare > 0) {
       break;
     }
