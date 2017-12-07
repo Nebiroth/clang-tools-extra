@@ -6,11 +6,20 @@
 namespace clang {
 namespace clangd {
 
-ClangdIndexSymbol::ClangdIndexSymbol(ClangdIndexDataStorage &Storage, USR Usr, ClangdIndex& Index) :
+ClangdIndexSymbol::ClangdIndexSymbol(ClangdIndexDataStorage &Storage, USR Usr,
+    std::string Name, std::string Qualifier, index::SymbolKind Kind,
+    ClangdIndex& Index) :
     Index(Index), Storage(Index.getStorage()) {
   Record = Storage.mallocRecord(RECORD_SIZE);
-  ClangdIndexString Str(Storage, Usr.c_str());
-  Storage.putRecPtr(Record + USR_OFFSET, Str.getRecord());
+  Storage.putRecPtr(Record + USR_OFFSET,
+      ClangdIndexString(Storage, Usr.c_str()).getRecord());
+  Storage.putRecPtr(Record + NAME_OFFSET,
+      ClangdIndexString(Storage, Name.c_str()).getRecord());
+  Storage.putInt8(Record + KIND_OFFSET, static_cast<uint8_t>(Kind));
+  static_assert(sizeof(uint8_t) == sizeof(index::SymbolKind), "SymbolKind cannot fit in uint8_t");
+
+  Storage.putRecPtr(Record + QUALIFIER_OFFSET,
+      ClangdIndexString(Storage, Qualifier.c_str()).getRecord());
   assert(!getFirstOccurrence());
 }
 
@@ -21,6 +30,29 @@ ClangdIndexSymbol::ClangdIndexSymbol(ClangdIndexDataStorage &Storage, RecordPoin
 
 std::string ClangdIndexSymbol::getUsr() {
   return ClangdIndexString(Storage, Storage.getRecPtr(Record + USR_OFFSET)).getString();
+}
+
+std::string ClangdIndexSymbol::getName() {
+  return ClangdIndexString(Storage, Storage.getRecPtr(Record + NAME_OFFSET)).getString();
+}
+
+index::SymbolKind ClangdIndexSymbol::getKind() {
+  return static_cast<index::SymbolKind>(Storage.getInt8(Record + KIND_OFFSET));
+}
+
+std::string ClangdIndexSymbol::getQualifier() {
+  return ClangdIndexString(Storage, Storage.getRecPtr(Record + QUALIFIER_OFFSET)).getString();
+}
+
+void ClangdIndexSymbol::foreachOccurrence(llvm::Optional<index::SymbolRoleSet> RolesFilter, llvm::function_ref<bool(ClangdIndexOccurrence&)> Receiver) {
+  auto Occurrence = getFirstOccurrence();
+  while (Occurrence) {
+    auto NextOccurence = Occurrence->getNextOccurrence();
+    if (!RolesFilter || (Occurrence->getRoles() & *RolesFilter)) {
+      Receiver(*Occurrence);
+    }
+    Occurrence = std::move(NextOccurence);
+  }
 }
 
 std::unique_ptr<ClangdIndexOccurrence> loadIndexOccurrence(ClangdIndexDataStorage &Storage, RecordPointer Offset, ClangdIndex &Index) {
@@ -100,8 +132,11 @@ void ClangdIndexSymbol::free() {
   assert(!Index.getSymbols(USR(getUsr())).empty());
   // FIXME: We should assert here, not in debug.
   Index.getSymbolBTree().remove(getRecord());
+  Index.getSymbolNameBTree().remove(getRecord());
   // Free the string we allocated ourselves
   Storage.freeRecord(Storage.getRecPtr(Record + USR_OFFSET));
+  Storage.freeRecord(Storage.getRecPtr(Record + NAME_OFFSET));
+  Storage.freeRecord(Storage.getRecPtr(Record + QUALIFIER_OFFSET));
   Storage.freeRecord(Record);
 }
 
@@ -474,6 +509,7 @@ public:
 
 void ClangdIndex::addSymbol(ClangdIndexSymbol &Symbol) {
   SymbolBTree.insert(Symbol.getRecord());
+  SymbolNameBTree.insert(Symbol.getRecord());
 }
 
 llvm::SmallVector<std::unique_ptr<ClangdIndexSymbol>, 1> ClangdIndex::getSymbols(
@@ -547,8 +583,13 @@ public:
 }
 
 ClangdIndex::ClangdIndex(std::string File) : File(File),
-    Storage(File, VERSION), SymbolsUSRComparator(*this), SymbolBTree(Storage,
-        SYMBOLS_TREE_OFFSET, SymbolsUSRComparator), FilesComparator(*this), FilesBTree(
+    Storage(File, VERSION), SymbolsUSRComparator(*this),
+    SymbolsNameComparator(*this),
+    SymbolBTree(Storage,
+        SYMBOLS_TREE_OFFSET, SymbolsUSRComparator),
+        SymbolNameBTree(Storage,
+                SYMBOLS_NAME_TREE_OFFSET, SymbolsNameComparator),
+        FilesComparator(*this), FilesBTree(
         Storage, FILES_TREE_OFFSET, FilesComparator) {
 }
 
@@ -564,6 +605,92 @@ void ClangdIndex::dumpSymbolsTree() {
   getSymbolBTree().dump([this](RecordPointer Rec, llvm::raw_ostream &OS) {
       OS << ClangdIndexSymbol(Storage, Rec, *this).getUsr();
     }, llvm::errs());
+}
+
+namespace {
+class SymbolNameVisitor: public BTreeVisitor {
+  std::string SymbolName;
+  ClangdIndex &Index;
+  llvm::SmallVector<std::unique_ptr<ClangdIndexSymbol>, 1> Result;
+
+public:
+  SymbolNameVisitor(std::string SymbolName, ClangdIndex &Index) :
+    SymbolName(SymbolName), Index(Index) {
+  }
+
+  int compare(RecordPointer Record) override {
+    ClangdIndexSymbol Current(Index.getStorage(), Record, Index);
+    std::string CurrentName = Current.getName();
+    if (CurrentName.rfind(SymbolName, 0) == 0) {
+      return 0;
+    }
+
+    return CurrentName.compare(SymbolName.c_str());
+  }
+
+  void visit(RecordPointer Record) override {
+    std::unique_ptr<ClangdIndexSymbol> Current = llvm::make_unique<
+        ClangdIndexSymbol>(Index.getStorage(), Record, Index);
+    Result.push_back(std::move(Current));
+  }
+
+  llvm::SmallVector<std::unique_ptr<ClangdIndexSymbol>, 1> getResult() {
+    return std::move(Result);
+  }
+};
+}
+
+//FIXME: This can only query using a non-qualified name.
+void ClangdIndex::foreachSymbols(StringRef Query,
+    llvm::function_ref<bool(ClangdIndexSymbol&)> Receiver) {
+  SymbolNameVisitor Visitor(Query, *this);
+  SymbolNameBTree.accept(Visitor);
+  auto Syms = Visitor.getResult();
+  for (auto &Sym : Syms) {
+    Receiver(*Sym);
+  }
+}
+
+void ClangdIndex::foreachSymbols(const USR &Usr,
+    llvm::function_ref<bool(ClangdIndexSymbol&)> Receiver) {
+  SymbolUSRVisitor Visitor(Usr, *this);
+  SymbolBTree.accept(Visitor);
+  auto Syms = Visitor.getResult();
+  for (auto &Sym : Syms) {
+    Receiver(*Sym);
+  }
+}
+
+void ClangdIndex::foreachSymbols(llvm::function_ref<bool(ClangdIndexSymbol&)> Receiver) {
+  class SymbolAllVisitor: public BTreeVisitor {
+    ClangdIndex &Index;
+    llvm::SmallVector<std::unique_ptr<ClangdIndexSymbol>, 1> Result;
+
+  public:
+    SymbolAllVisitor(ClangdIndex &Index) :
+        Index(Index) {
+    }
+
+    int compare(RecordPointer Record) override {
+      return 0;
+    }
+
+    void visit(RecordPointer Record) override {
+      std::unique_ptr<ClangdIndexSymbol> Current = llvm::make_unique<
+          ClangdIndexSymbol>(Index.getStorage(), Record, Index);
+      Result.push_back(std::move(Current));
+    }
+
+    llvm::SmallVector<std::unique_ptr<ClangdIndexSymbol>, 1> getResult() {
+      return std::move(Result);
+    }
+  };
+  SymbolAllVisitor Visitor(*this);
+  SymbolBTree.accept(Visitor);
+  auto Syms = Visitor.getResult();
+  for (auto &Sym : Syms) {
+    Receiver(*Sym);
+  }
 }
 
 void ClangdIndex::dumpFilesTree() {

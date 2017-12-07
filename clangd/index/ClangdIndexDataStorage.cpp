@@ -208,6 +208,15 @@ void ClangdIndexDataStorage::putRecPtr(RecordPointer Rec, RecordPointer Value) {
   getDataPiece(Rec)->putRecPtr(Rec, Value);
 }
 
+void ClangdIndexDataStorage::putInt8(RecordPointer Rec, int8_t Value) {
+  assert(WriteMode);
+  getDataPiece(Rec)->putInt8(Rec, Value);
+}
+
+int8_t ClangdIndexDataStorage::getInt8(RecordPointer Rec) {
+  return getDataPiece(Rec)->getInt8(Rec);
+}
+
 void ClangdIndexDataStorage::putInt32(RecordPointer Rec, int Value) {
   assert(WriteMode);
   getDataPiece(Rec)->putInt32(Rec, Value);

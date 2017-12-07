@@ -264,6 +264,8 @@ const std::string ExecuteCommandParams::CLANGD_DUMPINCLUDEDBY_COMMAND =
     "dumpincludedby";
 const std::string ExecuteCommandParams::CLANGD_DUMPINCLUSIONS_COMMAND =
     "dumpinclusions";
+const std::string ExecuteCommandParams::CLANGD_PRINTSTATS_COMMAND =
+    "printstats";
 
 bool fromJSON(const json::Expr &Params, ExecuteCommandParams &R) {
   json::ObjectMapper O(Params);
@@ -282,8 +284,24 @@ bool fromJSON(const json::Expr &Params, ExecuteCommandParams &R) {
              fromJSON(Args->front(), R.textDocument);
   } else if (R.command == ExecuteCommandParams::CLANGD_REINDEX_COMMAND) {
       return !Args || Args->empty();
+  } else if (R.command == ExecuteCommandParams::CLANGD_PRINTSTATS_COMMAND) {
+      return !Args || Args->empty();
   }
   return false; // Unrecognized command.
+}
+
+json::Expr toJSON(const SymbolInformation &P) {
+  return json::obj{
+      {"name", P.name},
+      {"kind", static_cast<int>(P.kind)},
+      {"location", P.location},
+      {"containerName", P.containerName},
+  };
+}
+
+bool fromJSON(const json::Expr &Params, WorkspaceSymbolParams &R) {
+  json::ObjectMapper O(Params);
+  return O && O.map("query", R.query);
 }
 
 json::Expr toJSON(const WorkspaceEdit &WE) {

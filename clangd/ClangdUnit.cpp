@@ -187,16 +187,17 @@ ParsedAST::Build(std::unique_ptr<clang::CompilerInvocation> CI,
   // Rebuild the preamble if it is missing or can not be reused.
   const char* const DEFAULT_SOURCE_EXTENSIONS [] = { ".cpp", ".c", ".cc", ".cxx",
       ".c++", ".C", ".m", ".mm" };
-  bool IsSource = false;
   llvm::StringRef FileExtension = llvm::sys::path::extension(FileName);
   for (const char* Extension : DEFAULT_SOURCE_EXTENSIONS) {
-    if (FileExtension == Extension)
-      IsSource = true;
+    if (FileExtension == Extension) {
+      Preamble = nullptr;
+      break;
+    }
   }
   //FIXME: End hack
 
   const PrecompiledPreamble *PreamblePCH =
-      Preamble && IsSource ? &Preamble->Preamble : nullptr;
+      Preamble ? &Preamble->Preamble : nullptr;
   auto Clang = prepareCompilerInstance(
       std::move(CI), PreamblePCH, std::move(Buffer), std::move(PCHs),
       std::move(VFS), /*ref*/ UnitDiagsConsumer);
@@ -470,17 +471,21 @@ std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos, Clan
       IntrusiveRefCntPtr<DiagnosticsEngine> DE(CompilerInstance::createDiagnostics(new DiagnosticOptions));
       SourceManager TempSM(*DE, FM);
 
-      IndexDataProvider.foreachOccurrence(USRBuf, static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition), [&TempSM, &AST, &Result](ClangdIndexDataOccurrence &Occurrence) {
-        llvm::Optional<Location> L;
-        if (ClangdIndexDataDefinitionOccurrence* DefOccurrence = dyn_cast<ClangdIndexDataDefinitionOccurrence>(&Occurrence))
-          L = getLocation(AST.getASTContext().getSourceManager(), Occurrence.getPath(), DefOccurrence->getDefStartOffset(TempSM), DefOccurrence->getDefEndOffset(TempSM));
-        else
-          L = getLocation(AST.getASTContext().getSourceManager(), Occurrence.getPath(), Occurrence.getStartOffset(TempSM), Occurrence.getEndOffset(TempSM));
+      IndexDataProvider.foreachSymbols(USRBuf, [&TempSM, &AST, &Result](ClangdIndexDataSymbol &Sym) {
+        Sym.foreachOccurrence(static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition), [&TempSM, &AST, &Result](ClangdIndexDataOccurrence &Occurrence) {
+          llvm::Optional<Location> L;
+          if (ClangdIndexDataDefinitionOccurrence* DefOccurrence = dyn_cast<ClangdIndexDataDefinitionOccurrence>(&Occurrence))
+            L = getLocation(AST.getASTContext().getSourceManager(), Occurrence.getPath(), DefOccurrence->getDefStartOffset(TempSM), DefOccurrence->getDefEndOffset(TempSM));
+          else
+            L = getLocation(AST.getASTContext().getSourceManager(), Occurrence.getPath(), Occurrence.getStartOffset(TempSM), Occurrence.getEndOffset(TempSM));
 
-        if (L)
-          Result.push_back(*L);
+          if (L)
+            Result.push_back(*L);
+          return true;
+        });
         return true;
       });
+
       if (!Result.empty())
         return Result;
     }
@@ -565,10 +570,13 @@ std::vector<Location> clangd::findReferences(ParsedAST &AST, Position Pos,
       InterestingRoleSet |=
           static_cast<index::SymbolRoleSet>(index::SymbolRole::Declaration)
               | static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition);
-    IndexDataProvider.foreachOccurrence(USRBuf, InterestingRoleSet, [&References, &SourceMgr](ClangdIndexDataOccurrence &Occurrence) {
-      auto L = getLocation(SourceMgr, Occurrence.getPath(), Occurrence.getStartOffset(SourceMgr), Occurrence.getEndOffset(SourceMgr));
-      if (L)
-        References.push_back(*L);
+    IndexDataProvider.foreachSymbols(USRBuf, [InterestingRoleSet, &References, &SourceMgr](ClangdIndexDataSymbol &Sym) {
+      Sym.foreachOccurrence(InterestingRoleSet, [&References, &SourceMgr](ClangdIndexDataOccurrence &Occurrence) {
+        auto L = getLocation(SourceMgr, Occurrence.getPath(), Occurrence.getStartOffset(SourceMgr), Occurrence.getEndOffset(SourceMgr));
+        if (L)
+          References.push_back(*L);
+        return true;
+      });
       return true;
     });
   }

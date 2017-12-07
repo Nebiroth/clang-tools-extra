@@ -316,9 +316,13 @@ public:
   /// Called when an event occurs for a watched file in the workspace.
   void onFileEvent(const DidChangeWatchedFilesParams &Params);
 
+  llvm::Expected<std::vector<SymbolInformation>>
+  onWorkspaceSymbol(StringRef Query);
+
   void reindex();
   void dumpIncludedBy (URI File);
   void dumpInclusions (URI File);
+  void printStats();
 
 private:
   std::future<void>

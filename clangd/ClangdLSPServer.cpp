@@ -63,6 +63,7 @@ void ClangdLSPServer::onInitialize(Ctx C, InitializeParams &Params) {
                  {"commands", {ExecuteCommandParams::CLANGD_APPLY_FIX_COMMAND}},
              }},
             {"referencesProvider", true},
+            {"workspaceSymbolProvider", true},
         }}}});
   if (Params.rootUri && !Params.rootUri->file.empty())
     Server.setRootPath(Params.rootUri->file);
@@ -133,6 +134,8 @@ void ClangdLSPServer::onCommand(Ctx C, ExecuteCommandParams &Params) {
     Server.dumpIncludedBy(Params.textDocument->uri);
   } else if (Params.command == ExecuteCommandParams::CLANGD_DUMPINCLUSIONS_COMMAND && Params.textDocument) {
     Server.dumpInclusions(Params.textDocument->uri);
+  } else if (Params.command == ExecuteCommandParams::CLANGD_PRINTSTATS_COMMAND) {
+    Server.printStats();
   } else {
     // We should not get here because ExecuteCommandParams would not have
     // parsed in the first place and this handler should not be called. But if
@@ -141,6 +144,14 @@ void ClangdLSPServer::onCommand(Ctx C, ExecuteCommandParams &Params) {
         ErrorCode::InvalidParams,
         llvm::formatv("Unsupported command \"{0}\".", Params.command).str());
   }
+}
+
+void ClangdLSPServer::onWorkspaceSymbol(Ctx C, WorkspaceSymbolParams &Params) {
+  auto Items = Server.onWorkspaceSymbol(Params.query);
+  if (!Items)
+    return C.replyError(ErrorCode::InvalidParams,
+                        llvm::toString(Items.takeError()));
+  C.reply(json::ary(*Items));
 }
 
 void ClangdLSPServer::onRename(Ctx C, RenameParams &Params) {

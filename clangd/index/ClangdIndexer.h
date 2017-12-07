@@ -27,6 +27,7 @@ public:
   virtual void onFileEvent(FileEvent Event) {}
   virtual void indexRoot() = 0;
   virtual void reindex() = 0;
+  virtual void printStats() = 0;
 
   virtual ~ClangdIndexer() = default;
 };

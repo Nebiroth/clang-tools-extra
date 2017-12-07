@@ -72,6 +72,7 @@ private:
   void onSwitchSourceHeader(Ctx C, TextDocumentIdentifier &Params) override;
   void onFileEvent(Ctx C, DidChangeWatchedFilesParams &Params) override;
   void onCommand(Ctx C, ExecuteCommandParams &Params) override;
+  void onWorkspaceSymbol(Ctx C, WorkspaceSymbolParams &Params) override;
   void onRename(Ctx C, RenameParams &Parames) override;
   void onReferences(Ctx C, ReferenceParams &Params) override;
 

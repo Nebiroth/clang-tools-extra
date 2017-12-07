@@ -206,6 +206,8 @@ public:
   void flush();
   ClangdIndexDataPieceRef getDataPiece(RecordPointer Rec);
   void putRecPtr(RecordPointer Rec, RecordPointer Value);
+  void putInt8(RecordPointer Rec, int8_t);
+  int8_t getInt8(RecordPointer Rec);
   void putInt32(RecordPointer Rec, int32_t);
   int32_t getInt32(RecordPointer Rec);
   RecordPointer getRecPtr(RecordPointer Rec);

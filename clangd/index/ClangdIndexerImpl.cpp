@@ -416,7 +416,23 @@ void ClangdIndexerImpl::reindex() {
   indexRoot();
 }
 
+void ClangdIndexerImpl::printStats() {
+  unsigned NumSymbols, NumOccurrences = 0;
+  Index->foreachSymbols([&NumSymbols, &NumOccurrences](ClangdIndexSymbol &Sym){
+    NumSymbols++;
+    Sym.foreachOccurrence(llvm::None, [&NumOccurrences](ClangdIndexOccurrence &Occurrence){
+      NumOccurrences++;
+      return true;
+    });
+    return true;
+  });
+  llvm::errs() << "Index stats:\n";
+  llvm::errs().indent(2) << llvm::format("Symbols: %u\n", NumSymbols);
+  llvm::errs().indent(2) << llvm::format("Occurrences: %u\n", NumOccurrences);
+}
+
 namespace {
+
 class ClangdIndexDataOccurrenceAdapter : public ClangdIndexDataOccurrence {
   ClangdIndexOccurrence &Occurrence;
 public:
@@ -452,21 +468,56 @@ public:
   }
 };
 
+class ClangdIndexDataSymbolAdapter : public ClangdIndexDataSymbol {
+  ClangdIndexSymbol &Symbol;
+public:
+  ClangdIndexDataSymbolAdapter(ClangdIndexSymbol &Symbol) : Symbol(Symbol) {
+  }
+
+  index::SymbolKind getKind() override {
+    return Symbol.getKind();
+  }
+  std::string getName() override {
+    return Symbol.getName();
+  }
+  std::string getQualifier() override {
+    return Symbol.getQualifier();
+  }
+
+  std::string getUsr() override {
+    return Symbol.getUsr();
+  }
+
+  void foreachOccurrence(llvm::Optional<index::SymbolRoleSet> RolesFilter, llvm::function_ref<bool(ClangdIndexDataOccurrence&)> Receiver) override {
+    Symbol.foreachOccurrence(RolesFilter, [&Receiver](ClangdIndexOccurrence &Occurrence) {
+      if (ClangdIndexDefinitionOccurrence * DefOccurrence = dyn_cast<ClangdIndexDefinitionOccurrence>(&Occurrence)) {
+        ClangdIndexDataDefinitionOccurrenceAdapter DataOccurrence(*DefOccurrence);
+        Receiver(static_cast<ClangdIndexDataDefinitionOccurrence&>(DataOccurrence));
+      } else {
+        ClangdIndexDataOccurrenceAdapter DataOccurrence(Occurrence);
+        Receiver(DataOccurrence);
+      }
+      return true;
+    });
+  }
+};
+
 }
 
-void ClangdIndexerImpl::foreachOccurrence(
-    const USR& Buf, index::SymbolRoleSet Roles,
-    llvm::function_ref<bool(ClangdIndexDataOccurrence&)> Receiver) {
-  auto Occurrences = Index->getOccurrences(Buf, Roles);
-  for (auto &Occurrence : Occurrences) {
-    if (ClangdIndexDefinitionOccurrence * DefOccurrence = dyn_cast<ClangdIndexDefinitionOccurrence>(Occurrence.get())) {
-      ClangdIndexDataDefinitionOccurrenceAdapter DataOccurrence(*DefOccurrence);
-      Receiver(static_cast<ClangdIndexDataDefinitionOccurrence&>(DataOccurrence));
-    } else {
-      ClangdIndexDataOccurrenceAdapter DataOccurrence(*Occurrence);
-      Receiver(DataOccurrence);
-    }
-  }
+void ClangdIndexerImpl::foreachSymbols(StringRef Query, llvm::function_ref<bool(ClangdIndexDataSymbol&)> Receiver) {
+  Index->foreachSymbols(Query, [&Receiver](ClangdIndexSymbol &Symbol) {
+    ClangdIndexDataSymbolAdapter Sym(Symbol);
+    Receiver(Sym);
+    return true;
+  });
+}
+
+void ClangdIndexerImpl::foreachSymbols(const USR &Usr, llvm::function_ref<bool(ClangdIndexDataSymbol&)> Receiver) {
+  Index->foreachSymbols(Usr, [&Receiver](ClangdIndexSymbol &Symbol) {
+    ClangdIndexDataSymbolAdapter Sym(Symbol);
+    Receiver(Sym);
+    return true;
+  });
 }
 
 void ClangdIndexerImpl::dumpIncludedBy(StringRef File) {

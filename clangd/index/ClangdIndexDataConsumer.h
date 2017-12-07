@@ -26,6 +26,58 @@
 namespace clang {
 namespace clangd{
 
+namespace {
+IndexSourceLocation createIndexSourceLocation(SourceLocation Loc, const SourceManager& SourceMgr, const LangOptions& LangOpts) {
+  unsigned Offset = SourceMgr.getFileOffset(SourceMgr.getSpellingLoc(Loc));
+  if (Offset > UINT32_MAX) {
+    //FIXME is uint32_t considered not big enough??
+    llvm::errs() << "Offset too big to fit in uint32_t" << "\n";
+  }
+  uint32_t Offset32 = Offset;
+  return IndexSourceLocation(Offset32);
+}
+
+std::string getName(const Decl *D) {
+  auto ND = dyn_cast<NamedDecl>(D);
+  if (!ND)
+    return {};
+
+  return ND->getNameAsString();
+}
+
+std::string getQualifier(const Decl *D, const LangOptions &LangOpts) {
+  auto ND = dyn_cast<NamedDecl>(D);
+  if (!ND)
+    return {};
+
+  // Get the full qualified name, the non-qualified name and then diff
+  // them. If there's something left, that's the qualifier.
+  // The extra "::" is also trimmed.
+  std::string Res;
+  PrintingPolicy WithScopePP(LangOpts);
+  std::string WithScopeBuf;
+  llvm::raw_string_ostream WithScopeOS(WithScopeBuf);
+  ND->printQualifiedName(WithScopeOS, WithScopePP);
+
+  std::string ResWithScope = WithScopeOS.str();
+  if (!ResWithScope.empty()) {
+    // Get non-qualified name
+    std::string PrintedNameBuf;
+    llvm::raw_string_ostream PrintedNameOS(PrintedNameBuf);
+    ND->printName(PrintedNameOS);
+    auto Last = ResWithScope.rfind(PrintedNameOS.str());
+    if (Last != std::string::npos) {
+      Res = ResWithScope.substr(0, Last);
+      if (Res.length() > 2 &&
+          Res.substr(Res.length() - 2, Res.length()) == "::")
+        Res = Res.substr(0, Res.length() - 2);
+    }
+  }
+  return Res;
+}
+
+}
+
 /// This only consumes declarations, definitions and references at the moment.
 class ClangdIndexDataConsumer : public index::IndexDataConsumer {
   std::unique_ptr<index::CodegenNameGenerator> CGNameGen;
@@ -38,16 +90,6 @@ class ClangdIndexDataConsumer : public index::IndexDataConsumer {
 
   std::unordered_map<std::string, RecordPointer> IndexFileCache;
   std::unordered_map<std::string, RecordPointer> IndexSymbolCache;
-
-  IndexSourceLocation createIndexSourceLocation(SourceLocation Loc, const SourceManager& SourceMgr, const LangOptions& LangOpts) {
-    unsigned Offset = SourceMgr.getFileOffset(SourceMgr.getSpellingLoc(Loc));
-    if (Offset > UINT32_MAX) {
-      //FIXME is uint32_t considered not big enough??
-      llvm::errs() << "Offset too big to fit in uint32_t" << "\n";
-    }
-    uint32_t Offset32 = Offset;
-    return IndexSourceLocation(Offset32);
-  }
 
   std::unique_ptr<ClangdIndexFile> getOrCreateIndexFile(const SourceManager &SM, FileID FID) {
     const FileEntry *F = SM.getFileEntryForID(FID);
@@ -76,7 +118,8 @@ class ClangdIndexDataConsumer : public index::IndexDataConsumer {
     return File;
   }
 
-  llvm::SmallVector<std::unique_ptr<ClangdIndexSymbol>, 1> getOrCreateSymbols(const USR& Buf) {
+  llvm::SmallVector<std::unique_ptr<ClangdIndexSymbol>, 1> getOrCreateSymbols(
+      const USR& Buf, StringRef Name, index::SymbolKind Kind, StringRef Qualifier) {
     llvm::SmallVector<std::unique_ptr<ClangdIndexSymbol>, 1> Result;
     std::string USRStr = Buf.str();
     auto SymbolCacheIt = IndexSymbolCache.find(USRStr);
@@ -87,7 +130,7 @@ class ClangdIndexDataConsumer : public index::IndexDataConsumer {
 
     Result = Index.getSymbols(Buf);
     if (Result.empty()) {
-      Result.push_back(llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), Buf, Index));
+      Result.push_back(llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), Buf, Name, Qualifier, Kind, Index));
       Index.addSymbol(*Result.front());
     }
     IndexSymbolCache.insert( { USRStr, Result.front()->getRecord() });
@@ -113,84 +156,78 @@ public:
 
     SmallString<256> USRBuf;
     if (!index::generateUSRForDecl(D, USRBuf)) {
-      index::SymbolRoleSet InrestingRoleSet =
-          static_cast<index::SymbolRoleSet>(index::SymbolRole::Declaration)
-              | static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition)
-              | static_cast<index::SymbolRoleSet>(index::SymbolRole::Reference);
-      if (Roles & InrestingRoleSet) {
-        SourceLocation StartOfFileLoc = SM->getLocForStartOfFile(FID);
-        SourceLocation StartLoc = StartOfFileLoc.getLocWithOffset(Offset);
-        SourceRange Range = SourceRange(StartLoc,
-            Lexer::getLocForEndOfToken(StartLoc, 0, *SM, Ctx.getLangOpts()));
+      SourceLocation StartOfFileLoc = SM->getLocForStartOfFile(FID);
+      SourceLocation StartLoc = StartOfFileLoc.getLocWithOffset(Offset);
+      SourceRange Range = SourceRange(StartLoc,
+          Lexer::getLocForEndOfToken(StartLoc, 0, *SM, Ctx.getLangOpts()));
 
-        auto OccurrenceFile = getOrCreateIndexFile(*SM, SM->getFileID(Range.getBegin()));
-        if (!OccurrenceFile) {
-          return true;
-        }
-
-        //This is the logic to only index a given header once. We can only
-        //start indexing a file if it has no "last indexing time" set.
-        //We can only resume indexing if we
-        //were already indexing it before in the same consumer.
-        //A file is considered to be already indexing when it has the same
-        //FileID for the same file path. Since different inclusions of the
-        //same file have different FileIDs, it means we only index one
-        //version of a given file.
-        auto FilePath = OccurrenceFile->getPath();
-        assert(!FilePath.empty());
-        if (FilePathsBeingIndexed.find(FilePath) == FilePathsBeingIndexed.end()) {
-          if (OccurrenceFile->getLastIndexingTime()) {
-            // We should at least need to index the main file. If this trips
-            // this means we started indexing without clearing "last indexing time" first.
-            assert(!SM->isInMainFile(Range.getBegin()));
-            // File indexed, skip it.
-            return true;
-          }
-          // First time seeing this file, start indexing it.
-          FilePathsBeingIndexed.insert(FilePath);
-          assert(FilesBeingIndexed.find(FID) == FilesBeingIndexed.end());
-          FilesBeingIndexed.insert(FID);
-        } else if (FilesBeingIndexed.find(FID) == FilesBeingIndexed.end()) {
-          // File already being indexed, included a second time.
-          return true;
-        }
-
-        auto Symbols = getOrCreateSymbols(USRBuf);
-        //FIXME: multiple symbols?
-        auto Symbol = std::move(Symbols.front());
-        IndexSourceLocation LocStart = createIndexSourceLocation(Range.getBegin(), *SM, Ctx.getLangOpts());
-        IndexSourceLocation LocEnd = createIndexSourceLocation(Range.getEnd(), *SM, Ctx.getLangOpts());
-
-
-        llvm::Optional<SourceRange> DefinitionRange;
-        if (dyn_cast<FunctionDecl>(D)) {
-          if (auto OrigD = dyn_cast<FunctionDecl>(ASTNode.OrigD)) {
-            if (OrigD->isThisDeclarationADefinition()) {
-              DefinitionRange = OrigD->getSourceRange();
-            }
-          }
-        }
-
-        std::unique_ptr<ClangdIndexOccurrence> Occurrence;
-        if (DefinitionRange) {
-          IndexSourceLocation LocDefStart = createIndexSourceLocation(DefinitionRange->getBegin(), *SM, Ctx.getLangOpts());
-          IndexSourceLocation LocDefEnd = createIndexSourceLocation(DefinitionRange->getEnd(), *SM, Ctx.getLangOpts());
-          Occurrence =
-              llvm::make_unique<ClangdIndexDefinitionOccurrence>(Index.getStorage(), Index,
-                  *OccurrenceFile,
-                  *Symbol, LocStart, LocEnd, LocDefStart, LocDefEnd,
-                  static_cast<index::SymbolRoleSet>(Roles));
-        } else {
-          Occurrence =
-              llvm::make_unique<ClangdIndexOccurrence>(Index.getStorage(), Index,
-                  *OccurrenceFile,
-                  *Symbol, LocStart, LocEnd,
-                  static_cast<index::SymbolRoleSet>(Roles));
-        }
-
-        Symbol->addOccurrence(*Occurrence);
-        OccurrenceFile->addOccurrence(*Occurrence);
+      auto OccurrenceFile = getOrCreateIndexFile(*SM, SM->getFileID(Range.getBegin()));
+      if (!OccurrenceFile) {
+        return true;
       }
+
+      //This is the logic to only index a given header once. We can only
+      //start indexing a file if it has no "last indexing time" set.
+      //We can only resume indexing if we
+      //were already indexing it before in the same consumer.
+      //A file is considered to be already indexing when it has the same
+      //FileID for the same file path. Since different inclusions of the
+      //same file have different FileIDs, it means we only index one
+      //version of a given file.
+      auto FilePath = OccurrenceFile->getPath();
+      assert(!FilePath.empty());
+      if (FilePathsBeingIndexed.find(FilePath) == FilePathsBeingIndexed.end()) {
+        if (OccurrenceFile->getLastIndexingTime()) {
+          // We should at least need to index the main file. If this trips
+          // this means we started indexing without clearing "last indexing time" first.
+          assert(!SM->isInMainFile(Range.getBegin()));
+          // File indexed, skip it.
+          return true;
+        }
+        // First time seeing this file, start indexing it.
+        FilePathsBeingIndexed.insert(FilePath);
+        assert(FilesBeingIndexed.find(FID) == FilesBeingIndexed.end());
+        FilesBeingIndexed.insert(FID);
+      } else if (FilesBeingIndexed.find(FID) == FilesBeingIndexed.end()) {
+        // File already being indexed, included a second time.
+        return true;
+      }
+
+      auto Symbols = getOrCreateSymbols(USRBuf, getName(D), index::getSymbolInfo(D).Kind, getQualifier(D, Ctx.getLangOpts()));
+      //FIXME: multiple symbols?
+      auto Symbol = std::move(Symbols.front());
+      IndexSourceLocation LocStart = createIndexSourceLocation(Range.getBegin(), *SM, Ctx.getLangOpts());
+      IndexSourceLocation LocEnd = createIndexSourceLocation(Range.getEnd(), *SM, Ctx.getLangOpts());
+
+
+      llvm::Optional<SourceRange> DefinitionRange;
+      if (dyn_cast<FunctionDecl>(D)) {
+        if (auto OrigD = dyn_cast<FunctionDecl>(ASTNode.OrigD)) {
+          if (OrigD->isThisDeclarationADefinition()) {
+            DefinitionRange = OrigD->getSourceRange();
+          }
+        }
+      }
+
+      std::unique_ptr<ClangdIndexOccurrence> Occurrence;
+      if (DefinitionRange) {
+        IndexSourceLocation LocDefStart = createIndexSourceLocation(DefinitionRange->getBegin(), *SM, Ctx.getLangOpts());
+        IndexSourceLocation LocDefEnd = createIndexSourceLocation(DefinitionRange->getEnd(), *SM, Ctx.getLangOpts());
+        Occurrence =
+            llvm::make_unique<ClangdIndexDefinitionOccurrence>(Index.getStorage(), Index,
+                *OccurrenceFile,
+                *Symbol, LocStart, LocEnd, LocDefStart, LocDefEnd,
+                static_cast<index::SymbolRoleSet>(Roles));
+      } else {
+        Occurrence =
+            llvm::make_unique<ClangdIndexOccurrence>(Index.getStorage(), Index,
+                *OccurrenceFile,
+                *Symbol, LocStart, LocEnd,
+                static_cast<index::SymbolRoleSet>(Roles));
+      }
+
+      Symbol->addOccurrence(*Occurrence);
+      OccurrenceFile->addOccurrence(*Occurrence);
     }
 
     return true;

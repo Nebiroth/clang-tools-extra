@@ -24,19 +24,28 @@ class ClangdIndexSymbol {
 
   const static OffsetInRecord USR_OFFSET = 0;
   const static OffsetInRecord FIRST_OCCURRENCE = USR_OFFSET + ClangdIndexDataStorage::PTR_SIZE;
-  const static OffsetInRecord RECORD_SIZE  = FIRST_OCCURRENCE + ClangdIndexDataStorage::PTR_SIZE;
+  const static OffsetInRecord NAME_OFFSET = FIRST_OCCURRENCE + ClangdIndexDataStorage::PTR_SIZE;
+  const static OffsetInRecord QUALIFIER_OFFSET = NAME_OFFSET + ClangdIndexDataStorage::PTR_SIZE;
+  const static OffsetInRecord KIND_OFFSET = QUALIFIER_OFFSET + ClangdIndexDataStorage::PTR_SIZE;
+  const static OffsetInRecord RECORD_SIZE = KIND_OFFSET + sizeof(uint8_t);
 
   RecordPointer Record;
   ClangdIndex &Index;
   ClangdIndexDataStorage &Storage;
 public:
-  ClangdIndexSymbol(ClangdIndexDataStorage &Storage, USR Usr, ClangdIndex& Index);
+  ClangdIndexSymbol(ClangdIndexDataStorage &Storage, USR Usr, std::string Name,
+      std::string Qualifier, index::SymbolKind Kind, ClangdIndex& Index);
   ClangdIndexSymbol(ClangdIndexDataStorage &Storage, RecordPointer Record, ClangdIndex &Index);
   std::string getUsr();
+  std::string getName();
+  index::SymbolKind getKind();
+  std::string getQualifier();
 
   RecordPointer getRecord() const {
     return Record;
   }
+
+  void foreachOccurrence(llvm::Optional<index::SymbolRoleSet> RolesFilter, llvm::function_ref<bool(ClangdIndexOccurrence&)> Receiver);
 
   void addOccurrence(ClangdIndexOccurrence &Occurrence);
   void removeOccurrences(std::set<RecordPointer> ToBeRemoved);
@@ -81,7 +90,7 @@ private:
   const static OffsetInRecord SYMBOL_NEXT_OCCURENCE = FILE_NEXT_OFFSET + ClangdIndexDataStorage::PTR_SIZE;
 protected:
 
-  const static OffsetInRecord RECORD_SIZE  = SYMBOL_NEXT_OCCURENCE + ClangdIndexDataStorage::PTR_SIZE;
+  const static OffsetInRecord RECORD_SIZE = SYMBOL_NEXT_OCCURENCE + ClangdIndexDataStorage::PTR_SIZE;
 private:
 
   RecordPointer Record;
@@ -242,7 +251,7 @@ class ClangdIndexFile {
   const static int FIRST_INCLUDED_BY = FIRST_OCCURRENCE + ClangdIndexDataStorage::PTR_SIZE;
   const static int FIRST_INCLUSION = FIRST_INCLUDED_BY + ClangdIndexDataStorage::PTR_SIZE;
   const static int LAST_INDEXING_TIME = FIRST_INCLUSION + ClangdIndexDataStorage::PTR_SIZE;
-  const static int RECORD_SIZE  = LAST_INDEXING_TIME + ClangdIndexDataStorage::PTR_SIZE;
+  const static int RECORD_SIZE = LAST_INDEXING_TIME + ClangdIndexDataStorage::PTR_SIZE;
 
   std::string Path;
   RecordPointer Record;
@@ -361,18 +370,42 @@ class ClangdIndex {
     }
   };
 
+  class SymbolNameComparator: public BTreeComparator {
+    ClangdIndex &Index;
+
+  public:
+    SymbolNameComparator(ClangdIndex &Index) :
+        Index(Index) {
+    }
+
+    int compare(RecordPointer Record1, RecordPointer Record2) override {
+      ClangdIndexSymbol Symbol1(Index.getStorage(), Record1, Index);
+      ClangdIndexSymbol Symbol2(Index.getStorage(), Record2, Index);
+      int Compare = Symbol1.getName().compare(Symbol2.getName());
+      if (Compare != 0) {
+        return Compare;
+      }
+
+      if (Symbol1.getRecord() < Symbol2.getRecord())
+        return -1;
+      return 1;
+    }
+  };
+
   std::string File;
   ClangdIndexDataStorage Storage;
   SymbolUSRComparator SymbolsUSRComparator;
+  SymbolNameComparator SymbolsNameComparator;
   BTree SymbolBTree;
+  BTree SymbolNameBTree;
   FileComparator FilesComparator;
   BTree FilesBTree;
 
   const static int VERSION = 1;
 
   const static int SYMBOLS_TREE_OFFSET = ClangdIndexDataStorage::DATA_AREA;
-  const static int FILES_TREE_OFFSET = SYMBOLS_TREE_OFFSET + ClangdIndexDataStorage::PTR_SIZE;
-  const static int FIRST_FILE_OFFSET;
+  const static int SYMBOLS_NAME_TREE_OFFSET = SYMBOLS_TREE_OFFSET + ClangdIndexDataStorage::PTR_SIZE;
+  const static int FILES_TREE_OFFSET = SYMBOLS_NAME_TREE_OFFSET + ClangdIndexDataStorage::PTR_SIZE;
 
 public:
   ClangdIndex(std::string File);
@@ -388,6 +421,9 @@ public:
 
   llvm::SmallVector<std::unique_ptr<ClangdIndexSymbol>, 1> getSymbols(
       const USR& Buf);
+  void foreachSymbols(StringRef Query, llvm::function_ref<bool(ClangdIndexSymbol&)> Receiver);
+  void foreachSymbols(const USR &Usr, llvm::function_ref<bool(ClangdIndexSymbol&)> Receiver);
+  void foreachSymbols(llvm::function_ref<bool(ClangdIndexSymbol&)> Receiver);
   llvm::SmallVector<std::unique_ptr<ClangdIndexOccurrence>, 1> getDefinitions(
       const USR& Buf);
   llvm::SmallVector<std::unique_ptr<ClangdIndexOccurrence>, 1> getReferences(
@@ -406,6 +442,10 @@ public:
 
   BTree& getSymbolBTree() {
     return SymbolBTree;
+  }
+
+  BTree& getSymbolNameBTree() {
+    return SymbolNameBTree;
   }
 
   BTree& getFilesBTree() {
