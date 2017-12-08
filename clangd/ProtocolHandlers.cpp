@@ -74,4 +74,6 @@ void clangd::registerCallbackHandlers(JSONRPCDispatcher &Dispatcher,
   Register("workspace/executeCommand", &ProtocolCallbacks::onCommand);
   Register("workspace/symbol", &ProtocolCallbacks::onWorkspaceSymbol);
   Register("textDocument/references", &ProtocolCallbacks::onReferences);
+  Register("workspace/didChangeConfiguration",
+           &ProtocolCallbacks::onChangeConfiguration);
 }

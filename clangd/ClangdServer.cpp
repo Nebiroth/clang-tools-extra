@@ -194,7 +194,7 @@ ClangdServer::ClangdServer(GlobalCompilationDatabase &CDB,
       StorePreamblesInMemory(StorePreamblesInMemory),
       WorkScheduler(AsyncThreadsCount) {}
 
-void ClangdServer::setRootPath(PathRef RootPath) {
+void ClangdServer::setRootPath(PathRef RootPath, std::vector<Path> ExclusionList) {
   std::string NewRootPath = llvm::sys::path::convert_to_slash(
       RootPath, llvm::sys::path::Style::posix);
   SmallString<256> RootPathRemoveDots = StringRef(NewRootPath);
@@ -206,7 +206,7 @@ void ClangdServer::setRootPath(PathRef RootPath) {
     return;
 
   assert (!Indexer);
-  auto ClangIndexer = std::make_shared<ClangdIndexerImpl>(RootPath.str(), CDB);
+  auto ClangIndexer = std::make_shared<ClangdIndexerImpl>(RootPath.str(), CDB, ExclusionList);
   Indexer = ClangIndexer;
   IndexDataProvider = ClangIndexer;
   assert(Indexer && IndexDataProvider);
@@ -744,7 +744,7 @@ ClangdServer::findReferences(PathRef File, Position Pos, bool IncludeDeclaration
   return make_tagged(std::move(Result), TaggedFS.Tag);
 }
 
-void ClangdServer::reindex() {
+void ClangdServer::reindex(std::vector<Path> ExclusionList) {
   if (!RootPath)
     return;
 

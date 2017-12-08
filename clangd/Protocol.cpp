@@ -146,6 +146,7 @@ bool fromJSON(const json::Expr &Params, InitializeParams &R) {
   // Failing to handle a slightly malformed initialize would be a disaster.
   O.map("processId", R.processId);
   O.map("rootUri", R.rootUri);
+  O.map("initializationOptions", R.initializationOptions);
   O.map("rootPath", R.rootPath);
   O.map("trace", R.trace);
   // initializationOptions, capabilities unused
@@ -407,6 +408,24 @@ bool fromJSON(const json::Expr &Params, RenameParams &R) {
   return O && O.map("textDocument", R.textDocument) &&
          O.map("position", R.position) && O.map("newName", R.newName);
 }
+
+bool fromJSON(const json::Expr &Params, DidChangeConfigurationParams &CCP) {
+  json::ObjectMapper O(Params);
+  return O && O.map("settings", CCP.settings);
+}
+
+json::Expr toJSON(const DidChangeConfigurationParams &CCP) {
+
+  return json::obj{
+      {"settings", CCP.settings},
+  };
+}
+
+bool fromJSON(const json::Expr &Params, ClangdConfigurationParamsChange &CCPC) {
+  json::ObjectMapper O(Params);
+  return O && O.map("ExclusionList", CCPC.ExclusionList);
+}
+
 
 } // namespace clangd
 } // namespace clang

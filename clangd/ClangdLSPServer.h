@@ -75,6 +75,8 @@ private:
   void onWorkspaceSymbol(Ctx C, WorkspaceSymbolParams &Params) override;
   void onRename(Ctx C, RenameParams &Parames) override;
   void onReferences(Ctx C, ReferenceParams &Params) override;
+  void onChangeConfiguration(Ctx C,
+                             DidChangeConfigurationParams &Params) override;
 
   std::vector<clang::tooling::Replacement>
   getFixIts(StringRef File, const clangd::Diagnostic &D);

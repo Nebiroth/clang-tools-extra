@@ -57,6 +57,8 @@ public:
   virtual void onWorkspaceSymbol(Ctx C, WorkspaceSymbolParams &Params) = 0;
   virtual void onRename(Ctx C, RenameParams &Parames) = 0;
   virtual void onReferences(Ctx C, ReferenceParams &Params) = 0;
+  virtual void onChangeConfiguration(Ctx C,
+                                     DidChangeConfigurationParams &Params) = 0;
 };
 
 void registerCallbackHandlers(JSONRPCDispatcher &Dispatcher, JSONOutput &Out,

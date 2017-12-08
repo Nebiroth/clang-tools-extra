@@ -171,6 +171,26 @@ inline bool fromJSON(const json::Expr &, NoParams &) { return true; }
 using ShutdownParams = NoParams;
 using ExitParams = NoParams;
 
+/// Clangd extension to manage a workspace/didChangeConfiguration notification
+/// since the data received is described as 'any' type in LSP.
+struct ClangdConfigurationParamsChange {
+
+  llvm::Optional<std::vector<std::string>> ExclusionList;
+};
+bool fromJSON(const json::Expr &, ClangdConfigurationParamsChange &);
+
+struct DidChangeConfigurationParams {
+  DidChangeConfigurationParams() = default;
+  DidChangeConfigurationParams(ClangdConfigurationParamsChange settings)
+      : settings(settings) {}
+
+  // We use this predefined struct because it is easier to use
+  // than the protocol specified type of 'any'.
+  ClangdConfigurationParamsChange settings;
+};
+bool fromJSON(const json::Expr &, DidChangeConfigurationParams &);
+json::Expr toJSON(const DidChangeConfigurationParams &);
+
 struct InitializeParams {
   /// The process Id of the parent process that started
   /// the server. Is null if the process has not been started by another
@@ -189,8 +209,8 @@ struct InitializeParams {
   /// `rootUri` wins.
   llvm::Optional<URI> rootUri;
 
-  // User provided initialization options.
-  // initializationOptions?: any;
+  /// User provided initialization options.
+  llvm::Optional<std::vector<std::string>> initializationOptions;
 
   /// The capabilities provided by the client (editor or tool)
   /// Note: Not currently used by clangd
