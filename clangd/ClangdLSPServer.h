@@ -70,6 +70,7 @@ private:
   void onSignatureHelp(Ctx C, TextDocumentPositionParams &Params) override;
   void onGoToDefinition(Ctx C, TextDocumentPositionParams &Params) override;
   void onSwitchSourceHeader(Ctx C, TextDocumentIdentifier &Params) override;
+  void onDocumentHighlight(Ctx C, TextDocumentPositionParams &Params) override;
   void onFileEvent(Ctx C, DidChangeWatchedFilesParams &Params) override;
   void onCommand(Ctx C, ExecuteCommandParams &Params) override;
   void onWorkspaceSymbol(Ctx C, WorkspaceSymbolParams &Params) override;
@@ -77,9 +78,7 @@ private:
   void onReferences(Ctx C, ReferenceParams &Params) override;
   void onChangeConfiguration(Ctx C,
                              DidChangeConfigurationParams &Params) override;
-
-  std::vector<clang::tooling::Replacement>
-  getFixIts(StringRef File, const clangd::Diagnostic &D);
+  std::vector<TextEdit> getFixIts(StringRef File, const clangd::Diagnostic &D);
 
   JSONOutput &Out;
   /// Used to indicate that the 'shutdown' request was received from the
@@ -92,7 +91,7 @@ private:
   bool IsDone = false;
 
   std::mutex FixItsMutex;
-  typedef std::map<clangd::Diagnostic, std::vector<clang::tooling::Replacement>>
+  typedef std::map<clangd::Diagnostic, std::vector<TextEdit>>
       DiagnosticToReplacementMap;
   /// Caches FixIts per file and diagnostics
   llvm::StringMap<DiagnosticToReplacementMap> FixItsMap;

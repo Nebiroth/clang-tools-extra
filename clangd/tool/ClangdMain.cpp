@@ -134,6 +134,8 @@ int main(int argc, char *argv[]) {
                  InputMirrorStream ? InputMirrorStream.getPointer() : nullptr,
                  PrettyPrint);
 
+  clangd::LoggingSession LoggingSession(Out);
+
   // If --compile-commands-dir arg was invoked, check value and override default
   // path.
   llvm::Optional<Path> CompileCommandsDirPath;
@@ -172,8 +174,7 @@ int main(int argc, char *argv[]) {
   CCOpts.IncludeIneligibleResults = IncludeIneligibleResults;
   // Initialize and run ClangdLSPServer.
   ClangdLSPServer LSPServer(Out, WorkerThreadsCount, StorePreamblesInMemory,
-                            CCOpts, ResourceDirRef,
-                            CompileCommandsDirPath);
+                            CCOpts, ResourceDirRef, CompileCommandsDirPath);
   constexpr int NoShutdownRequestErrorCode = 1;
   llvm::set_thread_name("clangd.main");
   return LSPServer.run(std::cin) ? 0 : NoShutdownRequestErrorCode;

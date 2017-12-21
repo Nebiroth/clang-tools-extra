@@ -9,6 +9,7 @@ add_clang_library(clangDaemon
   ClangdUnit.cpp
   ClangdUnitStore.cpp
   CodeComplete.cpp
+  Context.cpp
   Compiler.cpp
   DraftStore.cpp
   FuzzyMatch.cpp
@@ -25,6 +26,8 @@ add_clang_library(clangDaemon
   index/ClangdIndexDataPiece.cpp
   index/ClangdIndexDataStorage.cpp
   index/ClangdIndexString.cpp
+  index/Index.cpp
+  index/SymbolCollector.cpp
 
   LINK_LIBS
   clangAST

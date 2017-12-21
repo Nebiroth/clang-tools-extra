@@ -22,6 +22,8 @@ class ClangdIndexerImpl: public ClangdIndexer, public ClangdIndexDataProvider {
 public:
   ClangdIndexerImpl(std::string RootPath, GlobalCompilationDatabase &CDB,
                     std::vector<Path> ExclusionList);
+public:
+  ClangdIndexerImpl(std::string RootPath, GlobalCompilationDatabase &CDB);
   void onFileEvent(FileEvent Event) override;
   void indexRoot() override;
   void reindex() override;

@@ -426,6 +426,11 @@ bool fromJSON(const json::Expr &Params, ClangdConfigurationParamsChange &CCPC) {
   return O && O.map("ExclusionList", CCPC.ExclusionList);
 }
 
-
+json::Expr toJSON(const DocumentHighlight &DH) {
+  return json::obj{
+      {"range", toJSON(DH.range)},
+      {"kind", static_cast<int>(DH.kind)},
+  };
+}
 } // namespace clangd
 } // namespace clang

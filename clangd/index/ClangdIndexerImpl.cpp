@@ -43,8 +43,7 @@ class TranslationUnitToBeIndexedCollector {
   std::string RootPath;
 
 public:
-  TranslationUnitToBeIndexedCollector(bool CheckModified, ClangdIndex &Index, Path RootPath) : CheckModified(CheckModified), Index(Index), RootPath(RootPath) {
-  }
+  TranslationUnitToBeIndexedCollector(bool CheckModified, ClangdIndex &Index, Path RootPath) : CheckModified(CheckModified), Index(Index), RootPath(RootPath) {}
 
   void visitPath(StringRef FilePath, std::vector<Path> ExclusionList) {
     llvm::sys::fs::directory_entry Entry(FilePath);
@@ -54,7 +53,6 @@ public:
       return;
     }
     llvm::sys::fs::file_type Type = Status->type();
-
     if (Type == llvm::sys::fs::file_type::directory_file)
       visitFolder(FilePath, CheckModified, ExclusionList);
     else
@@ -66,7 +64,6 @@ public:
   }
 
 private:
-
   void addFile(StringRef File) {
     if (PathsToBeIndexedSet.find(File) == PathsToBeIndexedSet.end()) {
       PathsToBeIndexedSet.insert(File);
@@ -116,7 +113,6 @@ private:
     }
 
     std::unique_ptr<ClangdIndexFile> ExistingFile = Index.getFile(File);
-
     if (ExistingFile) {
       if (CheckModified) {
         if (!isTimeStampChanged(*ExistingFile, FileEntry)) {
@@ -302,17 +298,16 @@ void handleInclusions(ASTUnit &Unit, ClangdIndexFile &IndexFile, ClangdIndex &In
     }
   }
 }
+
 } // namespace
 
-ClangdIndexerImpl::ClangdIndexerImpl(std::string RootPath, GlobalCompilationDatabase &CDB, std::vector<Path> ExclusionList) :
-    RootPath(RootPath), CDB(CDB) {
+ClangdIndexerImpl::ClangdIndexerImpl(std::string RootPath, GlobalCompilationDatabase &CDB, std::vector<Path> ExclusionList) : RootPath(RootPath), CDB(CDB) {
   assert(!RootPath.empty());
   if (RootPath.empty())
     return;
 
   if (!ExclusionList.empty())
     setExclusionList(ExclusionList);
-
   SmallString<32> Filename(RootPath);
   llvm::sys::path::append(Filename, "clangd.index");
   // TODO, check version, etc
@@ -550,34 +545,30 @@ public:
   }
 
   void foreachOccurrence(llvm::Optional<index::SymbolRoleSet> RolesFilter, llvm::function_ref<bool(ClangdIndexDataOccurrence&)> Receiver) override {
-    Symbol.foreachOccurrence(RolesFilter, [&Receiver](ClangdIndexOccurrence &Occurrence) {
-      if (ClangdIndexDefinitionOccurrence * DefOccurrence = dyn_cast<ClangdIndexDefinitionOccurrence>(&Occurrence)) {
-        ClangdIndexDataDefinitionOccurrenceAdapter DataOccurrence(*DefOccurrence);
-        Receiver(static_cast<ClangdIndexDataDefinitionOccurrence&>(DataOccurrence));
-      } else {
-        ClangdIndexDataOccurrenceAdapter DataOccurrence(Occurrence);
-        Receiver(DataOccurrence);
-      }
-      return true;
-    });
-  }
+      Symbol.foreachOccurrence(RolesFilter, [&Receiver](ClangdIndexOccurrence &Occurrence) {
+        if (ClangdIndexDefinitionOccurrence * DefOccurrence = dyn_cast<ClangdIndexDefinitionOccurrence>(&Occurrence)) {
+          ClangdIndexDataDefinitionOccurrenceAdapter DataOccurrence(*DefOccurrence);
+          return Receiver(static_cast<ClangdIndexDataDefinitionOccurrence&>(DataOccurrence));
+        } else {
+          ClangdIndexDataOccurrenceAdapter DataOccurrence(Occurrence);
+          return Receiver(DataOccurrence);
+        }
+      });
+    }
 };
-
 }
 
 void ClangdIndexerImpl::foreachSymbols(StringRef Query, llvm::function_ref<bool(ClangdIndexDataSymbol&)> Receiver) {
   Index->foreachSymbols(Query, [&Receiver](ClangdIndexSymbol &Symbol) {
     ClangdIndexDataSymbolAdapter Sym(Symbol);
-    Receiver(Sym);
-    return true;
+    return Receiver(Sym);
   });
 }
 
 void ClangdIndexerImpl::foreachSymbols(const USR &Usr, llvm::function_ref<bool(ClangdIndexDataSymbol&)> Receiver) {
   Index->foreachSymbols(Usr, [&Receiver](ClangdIndexSymbol &Symbol) {
     ClangdIndexDataSymbolAdapter Sym(Symbol);
-    Receiver(Sym);
-    return true;
+    return Receiver(Sym);
   });
 }
 

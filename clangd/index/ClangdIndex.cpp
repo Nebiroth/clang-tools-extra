@@ -49,7 +49,8 @@ void ClangdIndexSymbol::foreachOccurrence(llvm::Optional<index::SymbolRoleSet> R
   while (Occurrence) {
     auto NextOccurence = Occurrence->getNextOccurrence();
     if (!RolesFilter || (Occurrence->getRoles() & *RolesFilter)) {
-      Receiver(*Occurrence);
+      if (!Receiver(*Occurrence))
+        break;
     }
     Occurrence = std::move(NextOccurence);
   }
@@ -647,7 +648,8 @@ void ClangdIndex::foreachSymbols(StringRef Query,
   SymbolNameBTree.accept(Visitor);
   auto Syms = Visitor.getResult();
   for (auto &Sym : Syms) {
-    Receiver(*Sym);
+    if (!Receiver(*Sym))
+      break;
   }
 }
 
@@ -657,7 +659,9 @@ void ClangdIndex::foreachSymbols(const USR &Usr,
   SymbolBTree.accept(Visitor);
   auto Syms = Visitor.getResult();
   for (auto &Sym : Syms) {
-    Receiver(*Sym);
+
+    if (!Receiver(*Sym))
+      break;
   }
 }
 
