@@ -20,7 +20,7 @@ const unsigned ClangdIndexDataStorage::MAX_BLOCK_SIZE;
 const unsigned ClangdIndexDataStorage::MALLOC_AREA_START;
 
 //TODO: Cache should eventually be configurable.
-const unsigned DEFAULT_CACHE_SIZE = 5 * 1024 * 1024;
+const unsigned DEFAULT_CACHE_SIZE = 64 * 1024 * 1024;
 const unsigned DEFAULT_CACHE_SIZE_PIECES = DEFAULT_CACHE_SIZE
     / ClangdIndexDataPiece::PIECE_SIZE;
 const unsigned DEFAULT_CACHE_RECENT_SIZE_PIECES = DEFAULT_CACHE_SIZE_PIECES / 3;
