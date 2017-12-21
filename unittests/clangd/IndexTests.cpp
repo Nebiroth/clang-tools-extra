@@ -7,12 +7,23 @@
 #include "llvm/Support/Path.h"
 
 namespace {
-const char *STORAGE_FILE_NAME = "test.index";
 const unsigned VERSION_NUM = 1;
 
-void deleteStorageFileIfExists() {
-  if (llvm::sys::fs::exists(STORAGE_FILE_NAME)) {
-    llvm::sys::fs::remove_directories(STORAGE_FILE_NAME);
+std::string getTempStoragePath() {
+  static llvm::SmallString<10> STORAGE_FILE_PATH;
+  if (STORAGE_FILE_PATH.empty()) {
+    llvm::SmallString<128> TmpDir;
+    llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/true, TmpDir);
+    llvm::SmallString<128> TmpFile;
+    llvm::sys::path::append(TmpFile, TmpDir, "test.index-%%%%%%%");
+    llvm::sys::fs::createUniqueFile(TmpFile, STORAGE_FILE_PATH);
+  }
+  return STORAGE_FILE_PATH.str();
+}
+
+void deleteStorageFileIfExists(llvm::StringRef FilePath) {
+  if (llvm::sys::fs::exists(FilePath)) {
+    llvm::sys::fs::remove_directories(FilePath);
   }
 }
 }
@@ -22,22 +33,22 @@ namespace clangd {
 
 class ClangdIndexDataStorageTest : public ::testing::Test {
   virtual void SetUp() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
   virtual void TearDown() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
 };
 
 TEST_F(ClangdIndexDataStorageTest, TestCreate) {
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
-    ASSERT_TRUE (llvm::sys::fs::exists(STORAGE_FILE_NAME));
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
+    ASSERT_TRUE (llvm::sys::fs::exists(getTempStoragePath()));
     ASSERT_EQ(Storage.getVersion(), VERSION_NUM);
   }
 
   uint64_t FileSizeResult;
-  ASSERT_EQ(llvm::sys::fs::file_size(STORAGE_FILE_NAME, FileSizeResult),
+  ASSERT_EQ(llvm::sys::fs::file_size(getTempStoragePath(), FileSizeResult),
       std::error_code());
   ASSERT_EQ(FileSizeResult, ClangdIndexDataPiece::PIECE_SIZE);
 }
@@ -45,20 +56,20 @@ TEST_F(ClangdIndexDataStorageTest, TestCreate) {
 TEST_F(ClangdIndexDataStorageTest, TestCreateReopenEmpty) {
   const unsigned EXPECTED_VERSION_NUM = 1234;
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, EXPECTED_VERSION_NUM);
-    ASSERT_TRUE (llvm::sys::fs::exists(STORAGE_FILE_NAME));
+    ClangdIndexDataStorage Storage(getTempStoragePath(), EXPECTED_VERSION_NUM);
+    ASSERT_TRUE (llvm::sys::fs::exists(getTempStoragePath()));
     ASSERT_EQ(Storage.getVersion(), EXPECTED_VERSION_NUM);
     Storage.flush();
   }
 
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, EXPECTED_VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), EXPECTED_VERSION_NUM);
     ASSERT_EQ(Storage.getVersion(), EXPECTED_VERSION_NUM);
   }
 }
 
 TEST_F(ClangdIndexDataStorageTest, TestReadWritePiece) {
-  ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+  ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
   char BuffWrite[ClangdIndexDataPiece::PIECE_SIZE] = { '1', '2', '3' };
   BuffWrite [ClangdIndexDataPiece::PIECE_SIZE - 1] = '\0';
   Storage.writePiece(BuffWrite, 0);
@@ -69,7 +80,7 @@ TEST_F(ClangdIndexDataStorageTest, TestReadWritePiece) {
 
 TEST_F(ClangdIndexDataStorageTest, TestMalloc) {
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
 
     // Try to malloc all the valid sizes
@@ -79,12 +90,12 @@ TEST_F(ClangdIndexDataStorageTest, TestMalloc) {
       ASSERT_GE(Rec, ClangdIndexDataStorage::MALLOC_AREA_START);
     }
     Storage.endWrite();
-    llvm::sys::fs::remove_directories(STORAGE_FILE_NAME);
+    llvm::sys::fs::remove_directories(getTempStoragePath());
   }
 
   // Test reusing a free block that was left-over from previous malloc
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
     // Choose a malloc size (and its header) that will fit nicely in a block
     // size. So we don't have to worry about rounding up to the next valid
@@ -110,13 +121,13 @@ TEST_F(ClangdIndexDataStorageTest, TestMalloc) {
         Rec + ClangdIndexDataStorage::BLOCK_HEADER_SIZE + SMALL_MALLOC_SIZE);
 
     Storage.endWrite();
-    llvm::sys::fs::remove_directories(STORAGE_FILE_NAME);
+    llvm::sys::fs::remove_directories(getTempStoragePath());
   }
 
   // Test not reusing left-over from previous malloc because second malloc is
   // just too big
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
     // Choose a malloc size (and its header) that will fit nicely in a block
     // size. So we don't have to worry about rounding up to the next valid
@@ -140,13 +151,13 @@ TEST_F(ClangdIndexDataStorageTest, TestMalloc) {
     ASSERT_EQ(SecondMallocRec, Rec + ClangdIndexDataStorage::MAX_BLOCK_SIZE);
 
     Storage.endWrite();
-    llvm::sys::fs::remove_directories(STORAGE_FILE_NAME);
+    llvm::sys::fs::remove_directories(getTempStoragePath());
   }
 
   // Test linked list of free blocks. Do mallocs so that two free blocks of the
   // same size are created than malloc so they are used in order.
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
     // Choose a malloc size (and its header) that will fit nicely in a block
     // size. So we don't have to worry about rounding up to the next valid
@@ -191,7 +202,7 @@ TEST_F(ClangdIndexDataStorageTest, TestMalloc) {
 TEST_F(ClangdIndexDataStorageTest, TestPutGetInt8) {
   RecordPointer Rec;
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
 
     Rec = Storage.mallocRecord(sizeof(int8_t) * 3);
@@ -210,7 +221,7 @@ TEST_F(ClangdIndexDataStorageTest, TestPutGetInt8) {
   }
 
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
 
     ASSERT_EQ(Storage.getInt8(Rec), INT8_MIN);
     ASSERT_EQ(Storage.getInt8(Rec + sizeof(int8_t)), INT8_MAX);
@@ -221,7 +232,7 @@ TEST_F(ClangdIndexDataStorageTest, TestPutGetInt8) {
 TEST_F(ClangdIndexDataStorageTest, TestPutGetInt32) {
   RecordPointer Rec;
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
 
     Rec = Storage.mallocRecord(ClangdIndexDataStorage::INT32_SIZE * 3);
@@ -240,7 +251,7 @@ TEST_F(ClangdIndexDataStorageTest, TestPutGetInt32) {
   }
 
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
 
     ASSERT_EQ(Storage.getInt32(Rec), INT32_MIN);
     ASSERT_EQ(Storage.getInt32(Rec + ClangdIndexDataStorage::INT32_SIZE),
@@ -261,7 +272,7 @@ TEST_F(ClangdIndexDataStorageTest, TestPutGetData) {
 
   RecordPointer Rec;
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
 
     Rec = Storage.mallocRecord(sizeof(MyDataStruct));
@@ -277,7 +288,7 @@ TEST_F(ClangdIndexDataStorageTest, TestPutGetData) {
   }
 
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
 
     MyDataStruct ObjGet;
     Storage.getData(Rec, &ObjGet, sizeof(MyDataStruct));
@@ -289,7 +300,7 @@ TEST_F(ClangdIndexDataStorageTest, TestPutGetData) {
 
 TEST_F(ClangdIndexDataStorageTest, TestStartEndWrite) {
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     //Commented this out because it caused crash reporters to show every time
     //the test was executed. Not sure what the best practice for this is.
     //ASSERT_DEATH_IF_SUPPORTED(Storage.mallocRecord(1), ".*write mode*.");
@@ -325,7 +336,7 @@ TEST_F(ClangdIndexDataStorageTest, TestStartEndWrite) {
 TEST_F(ClangdIndexDataStorageTest, TestFree) {
   // A simple malloc, delete, then malloc should end up at the same spot
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
 
     const static unsigned MALLOC_SIZE =
@@ -340,13 +351,13 @@ TEST_F(ClangdIndexDataStorageTest, TestFree) {
             + ClangdIndexDataStorage::BLOCK_HEADER_SIZE);
 
     Storage.endWrite();
-    llvm::sys::fs::remove_directories(STORAGE_FILE_NAME);
+    llvm::sys::fs::remove_directories(getTempStoragePath());
   }
 
   // Malloc all possible sizes, delete all, then mallocs should end up reusing
   // all free blocks
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
 
     // Try to malloc all the valid sizes
@@ -388,7 +399,7 @@ TEST_F(ClangdIndexDataStorageTest, TestPutGetRec) {
 
   // Malloc an integer, make a pointer to it
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
 
     RecordPointer Rec = Storage.mallocRecord(
@@ -403,7 +414,7 @@ TEST_F(ClangdIndexDataStorageTest, TestPutGetRec) {
 
   // Read back the int using the pointer
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     RecordPointer RecPtr = Storage.getRecPtr(ClangdIndexDataStorage::DATA_AREA);
     ASSERT_EQ(Storage.getInt32(RecPtr), SOME_INT_VALUE);
   }
@@ -411,10 +422,10 @@ TEST_F(ClangdIndexDataStorageTest, TestPutGetRec) {
 
 class ClangdIndexStringTest : public ::testing::Test {
   virtual void SetUp() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
   virtual void TearDown() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
 };
 
@@ -422,7 +433,7 @@ TEST_F(ClangdIndexStringTest, TestPutGetString) {
   std::vector<RecordPointer> Records;
   std::vector<std::string> WrittenStrings;
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
 
     // Try to write strings of all the valid sizes
@@ -450,7 +461,7 @@ TEST_F(ClangdIndexStringTest, TestPutGetString) {
   }
 
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
 
     // Make sure all the strings are there after reopening the file
     for (size_t I = 0; I < Records.size(); ++I) {
@@ -464,7 +475,7 @@ TEST_F(ClangdIndexStringTest, TestPutGetString) {
 }
 TEST_F(ClangdIndexStringTest, TestLargeString) {
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
     unsigned Length = ClangdIndexString::MAX_STRING_SIZE + 2;
     std::vector<char> Str(Length);
@@ -482,11 +493,12 @@ TEST_F(ClangdIndexStringTest, TestLargeString) {
 }
 
 class ClangdBTreeTest : public ::testing::Test {
+
   virtual void SetUp() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
   virtual void TearDown() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
 };
 
@@ -541,7 +553,7 @@ TEST_F(ClangdBTreeTest, TestInsert) {
   const int NUM_CHECKED = 1000;
   std::string TEST_STRING_PREFIX = "string";
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
     StringComparator Comp(Storage);
     BTree Tree(Storage, ClangdIndexDataStorage::DATA_AREA, Comp, 4);
@@ -554,7 +566,7 @@ TEST_F(ClangdBTreeTest, TestInsert) {
   }
 
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
     StringComparator Comp(Storage);
     BTree Tree(Storage, ClangdIndexDataStorage::DATA_AREA, Comp, 4);
@@ -571,7 +583,7 @@ TEST_F(ClangdBTreeTest, TestInsert) {
 TEST_F(ClangdBTreeTest, TestInsertSimple) {
   // Insert a number of strings and check if there are present after
   std::string TEST_STRING_PREFIX = "string";
-  ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+  ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
   Storage.startWrite();
   StringComparator Comp(Storage);
   BTree Tree(Storage, ClangdIndexDataStorage::DATA_AREA, Comp, 2);
@@ -587,7 +599,7 @@ TEST_F(ClangdBTreeTest, TestInsertMuchMore) {
   const int NUM_CHECKED = 50000;
   std::string TEST_STRING_PREFIX = "string";
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
     StringComparator Comp(Storage);
     BTree Tree(Storage, ClangdIndexDataStorage::DATA_AREA, Comp, 4);
@@ -613,7 +625,7 @@ TEST_F(ClangdBTreeTest, TestInsertMuchMore) {
   }
 
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
     StringComparator Comp(Storage);
     BTree Tree(Storage, ClangdIndexDataStorage::DATA_AREA, Comp, 4);
@@ -656,7 +668,7 @@ TEST_F(ClangdBTreeTest, TestInsertBackwards) {
   const int NUM_CHECKED = 1000;
   std::string TEST_STRING_PREFIX = "string";
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
     StringComparator Comp(Storage);
     BTree Tree(Storage, ClangdIndexDataStorage::DATA_AREA, Comp, 4);
@@ -669,7 +681,7 @@ TEST_F(ClangdBTreeTest, TestInsertBackwards) {
   }
 
   {
-    ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+    ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
     Storage.startWrite();
     StringComparator Comp(Storage);
     BTree Tree(Storage, ClangdIndexDataStorage::DATA_AREA, Comp, 4);
@@ -715,7 +727,7 @@ void testStringDeletion(std::string StringToDelete,
 }
 
 TEST_F(ClangdBTreeTest, TestRemove) {
-  ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+  ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
   Storage.startWrite();
 
   StringComparator Comp(Storage);
@@ -834,7 +846,7 @@ TEST_F(ClangdBTreeTest, TestRemove) {
 }
 
 TEST_F(ClangdBTreeTest, TestDump) {
-  ClangdIndexDataStorage Storage(STORAGE_FILE_NAME, VERSION_NUM);
+  ClangdIndexDataStorage Storage(getTempStoragePath(), VERSION_NUM);
   Storage.startWrite();
 
   StringComparator Comp(Storage);
@@ -878,10 +890,10 @@ TEST_F(ClangdBTreeTest, TestDump) {
 
 class ClangdIndexSymbolTest : public ::testing::Test {
   virtual void SetUp() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
   virtual void TearDown() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
 };
 
@@ -891,7 +903,7 @@ TEST_F(ClangdIndexSymbolTest, TestCreateAndGetters) {
   const USR TEST_USR("c#foo#");
 
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
     auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, "foo", "myns", index::SymbolKind::Function, Index);
@@ -912,7 +924,7 @@ TEST_F(ClangdIndexSymbolTest, TestCreateAndGetters) {
 
   // Make sure everything can be read reopening the index.
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto File = Index.getFile(TEST_FILE_PATH);
     ASSERT_TRUE(File);
@@ -929,10 +941,10 @@ TEST_F(ClangdIndexSymbolTest, TestCreateAndGetters) {
 
 class ClangdIndexOccurrenceTest : public ::testing::Test {
   virtual void SetUp() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
   virtual void TearDown() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
 };
 
@@ -944,7 +956,7 @@ TEST_F(ClangdIndexOccurrenceTest, TestCreateAndGetters) {
   const IndexSourceLocation LOC_END = 23;
 
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
     auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, "foo", "myns", index::SymbolKind::Function, Index);
@@ -976,7 +988,7 @@ TEST_F(ClangdIndexOccurrenceTest, TestCreateAndGetters) {
 
   // Make sure everything can be read reopening the index.
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto File = Index.getFile(TEST_FILE_PATH);
     ASSERT_TRUE(File);
@@ -997,17 +1009,17 @@ TEST_F(ClangdIndexOccurrenceTest, TestCreateAndGetters) {
 
 class ClangdIndexFileTest : public ::testing::Test {
   virtual void SetUp() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
   virtual void TearDown() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
 };
 
 TEST_F(ClangdIndexFileTest, TestCreateAndGetters) {
   const std::string TEST_FILE_PATH = "/foo.cpp";
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
     Index.addFile(*IndexFile);
@@ -1020,7 +1032,7 @@ TEST_F(ClangdIndexFileTest, TestCreateAndGetters) {
 
   // Make sure everything can be read reopening the index.
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto File = Index.getFile(TEST_FILE_PATH);
     ASSERT_TRUE(File);
@@ -1037,7 +1049,7 @@ TEST_F(ClangdIndexFileTest, TestAddOccurrence) {
   const IndexSourceLocation LOC_END = 23;
 
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
     auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, "foo", "myns", index::SymbolKind::Function, Index);
@@ -1065,7 +1077,7 @@ TEST_F(ClangdIndexFileTest, TestAddOccurrence) {
 
   // Make sure everything can be read reopening the index.
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto File = Index.getFile(TEST_FILE_PATH);
     ASSERT_TRUE(File);
@@ -1089,7 +1101,7 @@ TEST_F(ClangdIndexFileTest, TestOnChange) {
 
   // Very simple case. No occurrence in the file.
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
     Index.addFile(*IndexFile);
@@ -1101,11 +1113,11 @@ TEST_F(ClangdIndexFileTest, TestOnChange) {
     ASSERT_FALSE(IndexFile->getFirstOccurrence());
     ASSERT_TRUE(Index.getSymbols(TEST_USR).empty());
   }
-  llvm::sys::fs::remove_directories(STORAGE_FILE_NAME);
+  llvm::sys::fs::remove_directories(getTempStoragePath());
 
   // Simple case. Symbol with only one occurrence in one file.
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
     auto IndexSymbol = llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), TEST_USR, "foo", "myns", index::SymbolKind::Function, Index);
@@ -1125,11 +1137,11 @@ TEST_F(ClangdIndexFileTest, TestOnChange) {
     ASSERT_FALSE(IndexFile->getFirstOccurrence());
     ASSERT_TRUE(Index.getSymbols(TEST_USR).empty());
   }
-  llvm::sys::fs::remove_directories(STORAGE_FILE_NAME);
+  llvm::sys::fs::remove_directories(getTempStoragePath());
 
   // Symbol with a reference in one file and a definition in another file.
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
     auto IndexHeaderFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH + ".h", Index);
@@ -1182,21 +1194,21 @@ TEST_F(ClangdIndexFileTest, TestOnChange) {
 
 class ClangdIndexTest : public ::testing::Test {
   virtual void SetUp() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
   virtual void TearDown() override {
-    deleteStorageFileIfExists();
+    deleteStorageFileIfExists(getTempStoragePath());
   }
 };
 
 TEST_F(ClangdIndexTest, TestCreate) {
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
-    ASSERT_TRUE (llvm::sys::fs::exists(STORAGE_FILE_NAME));
+    ClangdIndex Index(getTempStoragePath());
+    ASSERT_TRUE (llvm::sys::fs::exists(getTempStoragePath()));
   }
 
   uint64_t FileSizeResult;
-  ASSERT_EQ(llvm::sys::fs::file_size(STORAGE_FILE_NAME, FileSizeResult),
+  ASSERT_EQ(llvm::sys::fs::file_size(getTempStoragePath(), FileSizeResult),
       std::error_code());
   ASSERT_NE(FileSizeResult, 0u);
 }
@@ -1204,7 +1216,7 @@ TEST_F(ClangdIndexTest, TestCreate) {
 TEST_F(ClangdIndexTest, TestAddGetFile) {
   const std::string TEST_FILE_PATH = "/foo.cpp";
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     Index.getStorage().startWrite();
     auto IndexFile = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), TEST_FILE_PATH, Index);
     Index.addFile(*IndexFile);
@@ -1214,7 +1226,7 @@ TEST_F(ClangdIndexTest, TestAddGetFile) {
   }
 
   {
-    ClangdIndex Index(STORAGE_FILE_NAME);
+    ClangdIndex Index(getTempStoragePath());
     ASSERT_TRUE(Index.getFile(TEST_FILE_PATH));
     ASSERT_FALSE(Index.getFile("/bar.cpp"));
   }
