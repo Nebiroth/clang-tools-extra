@@ -741,16 +741,26 @@ ClangdServer::onWorkspaceSymbol(StringRef Query) {
   IntrusiveRefCntPtr<DiagnosticsEngine> DE(CompilerInstance::createDiagnostics(new DiagnosticOptions));
   SourceManager TempSM(*DE, FM);
 
-  IndexDataProvider->foreachSymbols(Query, [&Result, &TempSM](ClangdIndexDataSymbol &Sym) {
+  const unsigned int MAX_WORKSPACE_SYMBOLS = 1000;
+  unsigned NumSymbols = 0;
+  IndexDataProvider->foreachSymbols(Query, [&NumSymbols, &Result, &TempSM](ClangdIndexDataSymbol &Sym) {
     USR Usr(Sym.getUsr());
-    Sym.foreachOccurrence(static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition), [&Result, &TempSM, &Sym](ClangdIndexDataOccurrence &Occurrence) {
+    Sym.foreachOccurrence(static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition), [&NumSymbols, &Result, &TempSM, &Sym](ClangdIndexDataOccurrence &Occurrence) {
       auto L = getLocation(TempSM, Occurrence.getPath(), Occurrence.getStartOffset(TempSM), Occurrence.getEndOffset(TempSM));
-      if (L)
+      if (L) {
         Result.push_back({Sym.getName(), indexSymbolKindToSymbolKind(Sym.getKind()), *L, Sym.getQualifier()});
+        NumSymbols++;
+        if (NumSymbols >= MAX_WORKSPACE_SYMBOLS)
+          return false;
+      }
       return true;
     });
+    if (NumSymbols >= MAX_WORKSPACE_SYMBOLS)
+      return false;
     return true;
   });
+
+  llvm::errs() << llvm::format("Found %u symbols.\n", Result.size());
   return Result;
 }
 

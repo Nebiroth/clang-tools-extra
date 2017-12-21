@@ -492,12 +492,11 @@ public:
     Symbol.foreachOccurrence(RolesFilter, [&Receiver](ClangdIndexOccurrence &Occurrence) {
       if (ClangdIndexDefinitionOccurrence * DefOccurrence = dyn_cast<ClangdIndexDefinitionOccurrence>(&Occurrence)) {
         ClangdIndexDataDefinitionOccurrenceAdapter DataOccurrence(*DefOccurrence);
-        Receiver(static_cast<ClangdIndexDataDefinitionOccurrence&>(DataOccurrence));
+        return Receiver(static_cast<ClangdIndexDataDefinitionOccurrence&>(DataOccurrence));
       } else {
         ClangdIndexDataOccurrenceAdapter DataOccurrence(Occurrence);
-        Receiver(DataOccurrence);
+        return Receiver(DataOccurrence);
       }
-      return true;
     });
   }
 };
@@ -507,16 +506,14 @@ public:
 void ClangdIndexerImpl::foreachSymbols(StringRef Query, llvm::function_ref<bool(ClangdIndexDataSymbol&)> Receiver) {
   Index->foreachSymbols(Query, [&Receiver](ClangdIndexSymbol &Symbol) {
     ClangdIndexDataSymbolAdapter Sym(Symbol);
-    Receiver(Sym);
-    return true;
+    return Receiver(Sym);
   });
 }
 
 void ClangdIndexerImpl::foreachSymbols(const USR &Usr, llvm::function_ref<bool(ClangdIndexDataSymbol&)> Receiver) {
   Index->foreachSymbols(Usr, [&Receiver](ClangdIndexSymbol &Symbol) {
     ClangdIndexDataSymbolAdapter Sym(Symbol);
-    Receiver(Sym);
-    return true;
+    return Receiver(Sym);
   });
 }
 
