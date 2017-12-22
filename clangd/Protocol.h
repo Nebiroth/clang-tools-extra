@@ -132,6 +132,18 @@ struct Metadata {
 };
 bool fromJSON(const json::Expr &, Metadata &);
 
+struct Command {
+  /// Title of the command, like 'save'
+  std::string title;
+
+  /// The identifier of the actual command handler
+  std::string command;
+
+  /// Arguments taht the command handler should be invoked with.
+  std::vector<std::string> arguments;
+};
+json::Expr toJSON(const Command &);
+
 struct TextEdit {
   /// The range of the text document to be manipulated. To insert
   /// text into a document create a range where start === end.
@@ -165,6 +177,14 @@ enum class TraceLevel {
   Verbose = 2,
 };
 bool fromJSON(const json::Expr &E, TraceLevel &Out);
+
+/// Clangd extension to manage a workspace/didChangeConfiguration notification
+/// since the data received is described as 'any' type in LSP.
+struct CodeLensData {
+  llvm::Optional<std::string> tempData;
+};
+bool fromJSON(const json::Expr &, CodeLensData &);
+json::Expr toJSON(const CodeLensData &);
 
 struct NoParams {};
 inline bool fromJSON(const json::Expr &, NoParams &) { return true; }
@@ -408,12 +428,31 @@ struct ExecuteCommandParams {
   std::string command;
 
   // Arguments
-
   llvm::Optional<WorkspaceEdit> workspaceEdit;
 
   llvm::Optional<TextDocumentIdentifier> textDocument;
 };
 bool fromJSON(const json::Expr &, ExecuteCommandParams &);
+bool toJSON(const ExecuteCommandParams &);
+
+/// A code lens represents a command that should be shown along with
+/// source text, like the number of references, a way to run tests, etc.
+/// A code lens is _unresolved_ when no command is associated to it. For performance
+/// reasons the creation of a code lens and resolving should be done in two stages.
+
+struct CodeLens {
+
+  /// The range in which this code lens is valid. Should only span a single line.
+  Range range;
+
+  /// The command this code lens represents.
+  llvm::Optional<Command> command;
+
+  /// A data entry field that is preserved on a code lens item between a code lens and a code lens resolve request.
+  llvm::Optional<CodeLensData> data;
+
+};
+json::Expr toJSON(const CodeLens &DH);
 
 /// A symbol kind.
 enum class SymbolKind {
@@ -493,6 +532,13 @@ struct ReferenceParams : public TextDocumentPositionParams {
   ReferenceContext context;
 };
 bool fromJSON(const json::Expr &Params, ReferenceParams &R);
+
+struct CodeLensParams {
+  /// The document to request code lens for.
+  TextDocumentIdentifier textDocument;
+};
+bool fromJSON(const json::Expr &, CodeLensParams &);
+
 
 /// The kind of a completion entry.
 enum class CompletionItemKind {

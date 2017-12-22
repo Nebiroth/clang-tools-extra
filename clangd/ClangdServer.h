@@ -311,6 +311,11 @@ public:
   llvm::Expected<tooling::Replacements>
   formatOnType(StringRef Code, PathRef File, Position Pos);
 
+  /// Get code lens for a given position
+  llvm::Expected<Tagged<std::vector<CodeLens>>>
+  findCodeLens(PathRef File);
+
+
   /// Rename all occurrences of the symbol at the \p Pos in \p File to
   /// \p NewName.
   Expected<std::vector<tooling::Replacement>> rename(const Context &Ctx,

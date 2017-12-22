@@ -291,6 +291,7 @@ bool fromJSON(const json::Expr &Params, ExecuteCommandParams &R) {
   return false; // Unrecognized command.
 }
 
+
 json::Expr toJSON(const SymbolInformation &P) {
   return json::obj{
       {"name", P.name},
@@ -426,11 +427,45 @@ bool fromJSON(const json::Expr &Params, ClangdConfigurationParamsChange &CCPC) {
   return O && O.map("ExclusionList", CCPC.ExclusionList);
 }
 
+
 json::Expr toJSON(const DocumentHighlight &DH) {
   return json::obj{
       {"range", toJSON(DH.range)},
       {"kind", static_cast<int>(DH.kind)},
   };
 }
+
+bool fromJSON(const json::Expr &Params, CodeLensData &CLD) {
+  json::ObjectMapper O(Params);
+  return O && O.map("data", CLD.tempData);
+}
+
+json::Expr toJSON(const CodeLensData &CLD) {
+  return json::obj{
+    {"tempData", CLD.tempData.getValue()},
+  };
+}
+
+bool fromJSON(const json::Expr &Params, CodeLensParams &CL) {
+  json::ObjectMapper O(Params);
+    return O && O.map("textDocument", CL.textDocument);
+}
+
+json::Expr toJSON(const Command &C) {
+  return json::obj{
+    {"title", C.title},
+    {"command", C.command},
+    {"arguments", json::ary(C.arguments)},
+  };
+}
+
+json::Expr toJSON(const CodeLens &CL) {
+  return json::obj{
+      {"range", toJSON(CL.range)},
+      {"command", toJSON(CL.command.getValue())},
+      {"data", toJSON(CL.data.getValue())},
+  };
+}
+
 } // namespace clangd
 } // namespace clang

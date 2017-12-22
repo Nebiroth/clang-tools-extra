@@ -326,13 +326,17 @@ void ClangdLSPServer::onReferences(Ctx C, ReferenceParams &Params) {
   reply(C, json::ary(Items->Value));
 }
 
-void ClangdLSPServer::onChangeConfiguration(
-    Ctx C, DidChangeConfigurationParams &Params) {
+void ClangdLSPServer::onCodeLens(Ctx C,
+                                  CodeLensParams &Params) {
+  auto Lens = Server.findCodeLens(Params.textDocument.uri.file);
 
-  // Verify if array is empty
-  if (Params.settings.ExclusionList.hasValue()) {
-    Server.reindex(Params.settings.ExclusionList.getValue());
+  if (!Lens) {
+    return replyError(C, ErrorCode::InternalError,
+        llvm::toString(Lens.takeError()));
+    return;
   }
+  reply(C, json::ary(Lens->Value));
+
 }
 
 ClangdLSPServer::ClangdLSPServer(JSONOutput &Out, unsigned AsyncThreadsCount,

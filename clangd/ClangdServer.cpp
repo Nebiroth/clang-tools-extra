@@ -545,6 +545,39 @@ ClangdServer::findDocumentHighlights(const Context &Ctx, PathRef File,
   return make_tagged(Result, TaggedFS.Tag);
 }
 
+llvm::Expected<Tagged<std::vector<CodeLens>>>
+ClangdServer::findCodeLens(PathRef File) {
+  auto FileContents = DraftMgr.getDraft(File);
+  if (!FileContents.Draft)
+    return llvm::make_error<llvm::StringError>(
+        "findCodeLens called on non-added file",
+        llvm::errc::invalid_argument);
+
+  auto TaggedFS = FSProvider.getTaggedFileSystem(File);
+
+  std::shared_ptr<CppFile> Resources = Units.getFile(File);
+  if (!Resources)
+    return llvm::make_error<llvm::StringError>(
+        "findCodeLens called on non-added file",
+        llvm::errc::invalid_argument);
+
+  std::vector<CodeLens> Result;
+  llvm::Optional<llvm::Error> Err;
+  Resources->getAST().get()->runUnderLock([this, File, &Err, &Result](ParsedAST *AST) {
+    if (!AST) {
+      Err = llvm::make_error<llvm::StringError>("Invalid AST",
+                                                llvm::errc::invalid_argument);
+      return;
+    }
+    Result = clangd::findCodeLens(*AST, File, *IndexDataProvider);
+  });
+
+  if (Err)
+    return std::move(*Err);
+  return make_tagged(Result, TaggedFS.Tag);
+}
+
+
 std::future<Context> ClangdServer::scheduleReparseAndDiags(
     Context Ctx, PathRef File, VersionedDraft Contents,
     std::shared_ptr<CppFile> Resources,
